@@ -4,7 +4,7 @@
 
 /**
  * AI Balance Widget
- * DeepSeek / StepFun / OpenAI / SerpBase / Kimi 余额概览
+ * DeepSeek / StepFun / Codex / SerpBase / Kimi 余额概览
  *
  * 依赖：LPL-Design-System.js（与本脚本放在 Scriptable 同一目录）
  * 首次在 Scriptable App 内运行会打开配置菜单，密钥保存于 iOS Keychain。
@@ -12,8 +12,8 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.2.0",
-  settingsVersion: 2,
+  version: "1.3.0",
+  settingsVersion: 3,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
 };
@@ -32,7 +32,7 @@ const CONFIG = {
   themeMode: "dark",
   refreshMinutes: 30,
   cacheHours: 24,
-  openAIMonthlyBudgetUSD: 0,
+  codexAccountId: "",
   serpBaseCredits: 0,
 };
 
@@ -54,12 +54,12 @@ const PROVIDERS = [
     fetch: fetchStepFun,
   },
   {
-    id: "openai",
-    name: "OpenAI",
-    shortName: "OA",
+    id: "codex",
+    name: "Codex",
+    shortName: "CX",
     color: "red",
-    keyLabel: "OpenAI Admin Key",
-    fetch: fetchOpenAI,
+    keyLabel: "Codex Access Token",
+    fetch: fetchCodex,
   },
   {
     id: "serpbase",
@@ -210,36 +210,60 @@ async function fetchKimi(key) {
   };
 }
 
-function monthStartUnix() {
-  const now = new Date();
-  return Math.floor(
-    new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000
+function decodeJwtPayload(token) {
+  try {
+    const part = String(token || "").split(".")[1];
+    if (!part) return {};
+    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    return JSON.parse(Data.fromBase64String(padded).toRawString());
+  } catch (_) {
+    return {};
+  }
+}
+
+function codexAccountId(token, settings) {
+  if (settings.codexAccountId) return settings.codexAccountId;
+  const payload = decodeJwtPayload(token);
+  const auth = payload["https://api.openai.com/auth"] || {};
+  return (
+    auth.chatgpt_account_id ||
+    payload.chatgpt_account_id ||
+    payload.account_id ||
+    ""
   );
 }
 
-async function fetchOpenAI(key, settings) {
-  const url =
-    "https://api.openai.com/v1/organization/costs" +
-    `?start_time=${monthStartUnix()}&bucket_width=1d&limit=31`;
-  const json = await requestJSON(url, key);
-  let spent = 0;
-  for (const bucket of json.data || []) {
-    for (const result of bucket.results || []) {
-      spent += Number(result.amount?.value || 0);
-    }
-  }
-  const budget = Number(settings.openAIMonthlyBudgetUSD || 0);
-  if (budget > 0) {
-    return {
-      ...money(Math.max(0, budget - spent), "USD"),
-      detail: `本月已用 $${spent.toFixed(2)}`,
-    };
+function remainingPercent(window) {
+  const used = Number(window?.used_percent);
+  if (!Number.isFinite(used)) return null;
+  return Math.max(0, Math.min(100, Math.round(100 - used)));
+}
+
+async function fetchCodex(key, settings) {
+  const accountId = codexAccountId(key, settings);
+  const headers = accountId ? { "ChatGPT-Account-Id": accountId } : {};
+  const json = await requestJSON(
+    "https://chatgpt.com/backend-api/wham/usage",
+    key,
+    headers
+  );
+  const limits = json.rate_limit || json.rate_limits || json;
+  const primary = limits.primary_window || limits.primary;
+  const secondary = limits.secondary_window || limits.secondary;
+  const fiveHourRemaining = remainingPercent(primary);
+  const weeklyRemaining = remainingPercent(secondary);
+  if (fiveHourRemaining === null) {
+    throw new Error("Codex 额度响应格式已变化");
   }
   return {
-    ...money(spent, "USD"),
-    display: `$${spent.toFixed(2)}`,
-    detail: "本月成本",
-    isUsage: true,
+    value: fiveHourRemaining,
+    unit: "%",
+    display: `${fiveHourRemaining}%`,
+    detail:
+      weeklyRemaining === null
+        ? "5小时剩余"
+        : `5小时 · 周剩余 ${weeklyRemaining}%`,
   };
 }
 
@@ -462,7 +486,9 @@ async function configure(settings) {
         `${getSecret(item.id) ? "✓ " : ""}${item.keyLabel}`
       )
     );
-    sheet.addAction(`OpenAI 月预算：$${settings.openAIMonthlyBudgetUSD}`);
+    sheet.addAction(
+      `Codex Account ID：${settings.codexAccountId ? "已配置" : "自动识别"}`
+    );
     sheet.addAction(`SerpBase 剩余额度：${settings.serpBaseCredits}`);
     sheet.addAction(`主题：${settings.themeMode}`);
     sheet.addDestructiveAction("恢复默认 UI");
@@ -482,13 +508,11 @@ async function configure(settings) {
       if (value !== null) setSecret(provider.id, value);
     } else if (choice === keyProviders.length) {
       const value = await promptText(
-        "OpenAI 月预算",
-        "单位 USD；设为 0 时显示本月成本",
-        settings.openAIMonthlyBudgetUSD
+        "Codex Account ID",
+        "通常可从 Access Token 自动识别；自动识别失败时再填写",
+        settings.codexAccountId
       );
-      if (value !== null && Number.isFinite(Number(value))) {
-        settings.openAIMonthlyBudgetUSD = Math.max(0, Number(value));
-      }
+      if (value !== null) settings.codexAccountId = value;
     } else if (choice === keyProviders.length + 1) {
       const value = await promptText(
         "SerpBase 剩余额度",

@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.3.0 · 2026-07-29
+
+- 将 OpenAI 月成本改为 Codex 订阅额度。
+- 显示 5 小时窗口剩余百分比，并在副标题显示每周剩余额度。
+- Codex Access Token 保存于 iOS Keychain。
+- 支持从 Token 自动识别 ChatGPT Account ID，也支持手动填写。
+- Codex 额度接口变化或临时不可用时继续使用本地缓存。
+
 ## 1.2.0 · 2026-07-29
 
 - 增加 Scriptable 一键安装器。
@@ -17,4 +25,3 @@
 ## 1.0.0 · 2026-07-29
 
 - 首次发布 DeepSeek、StepFun、OpenAI、SerpBase MCP 和 Kimi 余额组件。
-
