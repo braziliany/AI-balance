@@ -12,10 +12,11 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.5.0",
-  settingsVersion: 5,
+  version: "1.6.0",
+  settingsVersion: 6,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
+  historyFile: "ai-balance-history.json",
 };
 
 let DesignSystem;
@@ -171,6 +172,27 @@ function readCache() {
 
 function writeCache(data) {
   FileManager.local().writeString(cachePath(), JSON.stringify(data));
+}
+
+function historyPath() {
+  return FileManager.local().joinPath(
+    FileManager.local().documentsDirectory(),
+    APP.historyFile
+  );
+}
+
+function readHistory() {
+  const path = historyPath();
+  if (!FileManager.local().fileExists(path)) return {};
+  try {
+    return JSON.parse(FileManager.local().readString(path));
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeHistory(data) {
+  FileManager.local().writeString(historyPath(), JSON.stringify(data));
 }
 
 async function requestJSON(url, key, headers = {}) {
@@ -366,8 +388,64 @@ function changeText(delta, unit) {
   return `${arrow}${unit}${value}`;
 }
 
+function historicalValue(entries, targetAt, maxLag = Infinity) {
+  const candidates = (entries || [])
+    .filter(
+      (entry) =>
+        Number.isFinite(Number(entry.at)) &&
+        Number.isFinite(Number(entry.value)) &&
+        Number(entry.at) <= targetAt
+    )
+    .sort((left, right) => Number(right.at) - Number(left.at));
+  if (!candidates.length) return null;
+  const candidate = candidates[0];
+  return targetAt - Number(candidate.at) <= maxLag
+    ? Number(candidate.value)
+    : null;
+}
+
+function applyHistory(results, history, now) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const cutoff = now - 8 * dayMs;
+  for (const id of Object.keys(history)) {
+    history[id] = (Array.isArray(history[id]) ? history[id] : []).filter(
+      (entry) => Number(entry.at) >= cutoff
+    );
+  }
+
+  for (const item of results) {
+    if (item.status !== "ok") continue;
+    const entries = Array.isArray(history[item.id]) ? history[item.id] : [];
+    const dailyValue = historicalValue(entries, now - dayMs, dayMs / 2);
+    const weeklyValue = historicalValue(entries, now - 7 * dayMs, dayMs);
+    const daily =
+      dailyValue === null ? "" : changeText(item.value - dailyValue, item.unit);
+    const weekly =
+      weeklyValue === null
+        ? ""
+        : changeText(item.value - weeklyValue, item.unit);
+    item.periodDetail = [
+      daily ? `日 ${daily}` : "",
+      weekly ? `周 ${weekly}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    const recent = entries[entries.length - 1];
+    const shouldAppend = !recent || now - Number(recent.at) >= 15 * 60 * 1000;
+    const retained = [...entries];
+    if (shouldAppend) {
+      retained.push({ at: now, value: item.value, unit: item.unit });
+    }
+    history[item.id] = retained;
+  }
+
+  return history;
+}
+
 async function loadBalances(settings) {
   const cache = readCache();
+  const history = readHistory();
   const now = Date.now();
   const results = await Promise.all(
     orderedProviders(settings).map(async (provider) => {
@@ -404,7 +482,9 @@ async function loadBalances(settings) {
       }
     })
   );
+  applyHistory(results, history, now);
   writeCache(cache);
+  writeHistory(history);
   return results;
 }
 
@@ -494,6 +574,10 @@ function addBalanceCard(parent, item, palette) {
   if (item.secondaryDetail) {
     card.addSpacer(2);
     addText(card, item.secondaryDetail, 9, palette.muted);
+  }
+  if (item.periodDetail) {
+    card.addSpacer(2);
+    addText(card, item.periodDetail, 9, palette[item.color]);
   }
   if (Number.isFinite(item.progress)) {
     card.addSpacer(7);

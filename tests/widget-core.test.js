@@ -11,6 +11,8 @@ const source = fs
     `globalThis.__widgetTestApi = {
       CONFIG,
       changeText,
+      applyHistory,
+      historicalValue,
       isLowBalance,
       orderedProviders,
       parseCodexQuota,
@@ -77,5 +79,28 @@ assert.equal(
 );
 assert.equal(api.changeText(-2.5, "¥"), "↓¥2.50");
 assert.equal(api.changeText(7, "%"), "↑7%");
+
+const history = {
+  deepseek: [
+    { at: 1000, value: 20, unit: "¥" },
+    { at: 2000, value: 18, unit: "¥" },
+  ],
+};
+assert.equal(api.historicalValue(history.deepseek, 1500), 20);
+assert.equal(api.historicalValue(history.deepseek, 500), null);
+const now = 8 * 24 * 60 * 60 * 1000;
+const day = 24 * 60 * 60 * 1000;
+const historyWithPeriods = {
+  deepseek: [
+    { at: now - 7 * day - 1000, value: 30, unit: "¥" },
+    { at: now - day - 1000, value: 25, unit: "¥" },
+  ],
+};
+const resultWithHistory = [
+  { id: "deepseek", status: "ok", value: 22.82, unit: "¥" },
+];
+api.applyHistory(resultWithHistory, historyWithPeriods, now);
+assert.equal(resultWithHistory[0].periodDetail, "日 ↓¥2.18 · 周 ↓¥7.18");
+assert.equal(historyWithPeriods.deepseek.at(-1).value, 22.82);
 
 console.log("widget core: ok");
