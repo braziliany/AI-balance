@@ -12,8 +12,8 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.4.0",
-  settingsVersion: 4,
+  version: "1.5.0",
+  settingsVersion: 5,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
 };
@@ -204,6 +204,10 @@ function money(value, currency) {
 
 async function fetchDeepSeek(key) {
   const json = await requestJSON("https://api.deepseek.com/user/balance", key);
+  return parseDeepSeekBalance(json);
+}
+
+function parseDeepSeekBalance(json) {
   const balances = json.balance_infos || [];
   const item =
     balances.find((value) => value.currency === "CNY") || balances[0];
@@ -211,14 +215,25 @@ async function fetchDeepSeek(key) {
   return {
     ...money(item.total_balance, item.currency),
     detail: `充值 ${money(item.topped_up_balance, item.currency).display}`,
+    secondaryDetail:
+      `赠送 ${money(item.granted_balance, item.currency).display}`,
   };
 }
 
 async function fetchStepFun(key) {
   const json = await requestJSON("https://api.stepfun.com/v1/accounts", key);
+  return parseStepFunBalance(json);
+}
+
+function parseStepFunBalance(json) {
   const account = json.data || json;
   const result = money(account.balance, account.currency || "CNY");
-  return { ...result, detail: "可用余额" };
+  return {
+    ...result,
+    detail: `充值 ${money(account.total_cash_balance, "CNY").display}`,
+    secondaryDetail:
+      `赠送 ${money(account.total_voucher_balance, "CNY").display}`,
+  };
 }
 
 async function fetchKimi(key, settings) {
@@ -230,12 +245,20 @@ async function fetchKimi(key, settings) {
     `${host}/v1/users/me/balance`,
     key
   );
+  return parseKimiBalance(
+    json,
+    settings.kimiRegion === "international" ? "USD" : "CNY"
+  );
+}
+
+function parseKimiBalance(json, currency) {
   if (json.status === false) throw new Error(json.message || "查询失败");
   const data = json.data || {};
-  const currency = settings.kimiRegion === "international" ? "USD" : "CNY";
   return {
     ...money(data.available_balance, currency),
     detail: `现金 ${money(data.cash_balance, currency).display}`,
+    secondaryDetail:
+      `代金券 ${money(data.voucher_balance, currency).display}`,
   };
 }
 
@@ -277,6 +300,10 @@ async function fetchCodex(key, settings) {
     key,
     headers
   );
+  return parseCodexQuota(json);
+}
+
+function parseCodexQuota(json) {
   const limits = json.rate_limit || json.rate_limits || json;
   const primary = limits.primary_window || limits.primary;
   const secondary = limits.secondary_window || limits.secondary;
@@ -293,6 +320,8 @@ async function fetchCodex(key, settings) {
       weeklyRemaining === null
         ? "5小时剩余"
         : `5小时 · 周剩余 ${weeklyRemaining}%`,
+    secondaryDetail: "Codex 订阅额度",
+    progress: fiveHourRemaining / 100,
   };
 }
 
@@ -324,6 +353,19 @@ function isLowBalance(item, settings) {
   return item.value <= settings.lowMoneyThreshold;
 }
 
+function changeText(delta, unit) {
+  if (!Number.isFinite(delta) || Math.abs(delta) < 0.005) return "";
+  const arrow = delta > 0 ? "↑" : "↓";
+  const amount = Math.abs(delta);
+  const value =
+    unit === "%" || unit === "次"
+      ? Math.round(amount)
+      : amount.toFixed(amount >= 10 ? 0 : 2);
+  if (unit === "%") return `${arrow}${value}%`;
+  if (unit === "次") return `${arrow}${value}`;
+  return `${arrow}${unit}${value}`;
+}
+
 async function loadBalances(settings) {
   const cache = readCache();
   const now = Date.now();
@@ -336,6 +378,11 @@ async function loadBalances(settings) {
       try {
         const balance = await provider.fetch(key, settings);
         const item = { ...provider, ...balance, status: "ok", updatedAt: now };
+        const oldValue = Number(cache[provider.id]?.value);
+        if (Number.isFinite(oldValue)) {
+          item.delta = item.value - oldValue;
+          item.change = changeText(item.delta, item.unit);
+        }
         item.isLow = isLowBalance(item, settings);
         cache[provider.id] = item;
         return item;
@@ -438,7 +485,27 @@ function addBalanceCard(parent, item, palette) {
       : palette.white;
   addText(card, item.display, 24, valueColor, "bold");
   card.addSpacer(3);
-  addText(card, item.detail, 10, palette.secondary);
+  addText(
+    card,
+    [item.detail, item.change].filter(Boolean).join(" · "),
+    10,
+    palette.secondary
+  );
+  if (item.secondaryDetail) {
+    card.addSpacer(2);
+    addText(card, item.secondaryDetail, 9, palette.muted);
+  }
+  if (Number.isFinite(item.progress)) {
+    card.addSpacer(7);
+    const track = card.addStack();
+    track.size = new Size(100, 4);
+    track.cornerRadius = 2;
+    track.backgroundColor = new Color(palette.divider, 0.1);
+    const fill = track.addStack();
+    fill.size = new Size(Math.max(2, Math.round(item.progress * 100)), 4);
+    fill.cornerRadius = 2;
+    fill.backgroundColor = new Color(item.isLow ? palette.red : palette.yellow);
+  }
   return card;
 }
 

@@ -1,0 +1,7 @@
+{
+  "object": "account",
+  "type": "prepaid",
+  "balance": 15,
+  "total_cash_balance": 10,
+  "total_voucher_balance": 5
+}

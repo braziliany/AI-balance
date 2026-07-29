@@ -10,8 +10,13 @@ const source = fs
     "await main();",
     `globalThis.__widgetTestApi = {
       CONFIG,
+      changeText,
       isLowBalance,
       orderedProviders,
+      parseCodexQuota,
+      parseDeepSeekBalance,
+      parseKimiBalance,
+      parseStepFunBalance,
       remainingPercent,
     };`
   );
@@ -24,6 +29,18 @@ const context = {
 vm.runInNewContext(source, context, { filename: widgetPath });
 
 const api = context.__widgetTestApi;
+const fixture = (name) =>
+  JSON.parse(
+    fs.readFileSync(path.join(__dirname, "fixtures", `${name}.json`), "utf8")
+  );
+
+assert.equal(api.parseDeepSeekBalance(fixture("deepseek-balance")).display, "¥22.82");
+assert.equal(api.parseStepFunBalance(fixture("stepfun-account")).value, 15);
+assert.equal(api.parseKimiBalance(fixture("kimi-balance"), "CNY").display, "¥8.07");
+const codex = api.parseCodexQuota(fixture("codex-usage"));
+assert.equal(codex.display, "77%");
+assert.match(codex.detail, /59%/);
+
 assert.equal(api.remainingPercent({ used_percent: 23.4 }), 77);
 assert.equal(api.remainingPercent({ used_percent: 120 }), 0);
 assert.equal(api.remainingPercent({}), null);
@@ -58,5 +75,7 @@ assert.equal(
   api.isLowBalance({ status: "error", unit: "¥", value: 0 }, thresholds),
   false
 );
+assert.equal(api.changeText(-2.5, "¥"), "↓¥2.50");
+assert.equal(api.changeText(7, "%"), "↑7%");
 
 console.log("widget core: ok");

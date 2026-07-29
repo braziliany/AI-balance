@@ -30,19 +30,19 @@ assert.match(resources[1].sourceUrl, /AI-Balance\.js$/);
 assert.match(resources[2].sourceUrl, /Installer\.js$/);
 assert.equal(
   context.__installerTestApi.extractVersion(
-    'const APP = { version: "1.4.0" };'
+    'const APP = { version: "1.5.0" };'
   ),
-  "1.4.0"
+  "1.5.0"
 );
-assert.equal(context.__installerTestApi.compareVersions("1.3.0", "1.4.0"), -1);
-assert.equal(context.__installerTestApi.compareVersions("1.4.0", "1.4.0"), 0);
-assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.4.0"), 1);
+assert.equal(context.__installerTestApi.compareVersions("1.4.0", "1.5.0"), -1);
+assert.equal(context.__installerTestApi.compareVersions("1.5.0", "1.5.0"), 0);
+assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.5.0"), 1);
 assert.equal(
   context.__installerTestApi.extractReleaseNotes(
-    "# 更新日志\n\n## 1.4.0 · 2026-07-29\n\n- 图形化配置\n- 低余额警示\n\n## 1.3.0 · 2026-07-29",
-    "1.4.0"
+    "# 更新日志\n\n## 1.5.0 · 2026-07-29\n\n- 解析测试\n- 余额趋势\n\n## 1.4.0 · 2026-07-29",
+    "1.5.0"
   ),
-  "- 图形化配置\n- 低余额警示"
+  "- 解析测试\n- 余额趋势"
 );
 
 console.log("installer: ok");
