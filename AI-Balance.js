@@ -12,8 +12,8 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.6.0",
-  settingsVersion: 6,
+  version: "1.7.0",
+  settingsVersion: 7,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
   historyFile: "ai-balance-history.json",
@@ -41,6 +41,7 @@ const CONFIG = {
   lowMoneyThreshold: 10,
   lowQuotaThreshold: 20,
   lowCreditsThreshold: 100,
+  usdToCnyRate: 0,
 };
 
 const PROVIDERS = [
@@ -213,32 +214,53 @@ async function requestJSON(url, key, headers = {}) {
   return json;
 }
 
-function money(value, currency) {
+function formatAmount(value) {
   const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  const digits = Math.abs(number) >= 100 ? 0 : 2;
+  try {
+    return number.toLocaleString("zh-CN", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+  } catch (_) {
+    return number.toFixed(digits);
+  }
+}
+
+function money(value, currency, usdToCnyRate = 0) {
+  const number = Number(value);
+  const code = String(currency || "CNY").toUpperCase();
+  const unit = code === "USD" ? "$" : "¥";
+  const rate = Number(usdToCnyRate);
   return {
     value: Number.isFinite(number) ? number : 0,
-    unit: String(currency || "CNY").toUpperCase() === "USD" ? "$" : "¥",
-    display: `${String(currency || "CNY").toUpperCase() === "USD" ? "$" : "¥"}${
-      Number.isFinite(number) ? number.toFixed(number >= 100 ? 0 : 2) : "--"
-    }`,
+    unit,
+    currency: code,
+    display: `${unit}${formatAmount(number)}`,
+    convertedDisplay:
+      code === "USD" && Number.isFinite(rate) && rate > 0
+        ? `≈¥${formatAmount(number * rate)}`
+        : "",
   };
 }
 
-async function fetchDeepSeek(key) {
+async function fetchDeepSeek(key, settings) {
   const json = await requestJSON("https://api.deepseek.com/user/balance", key);
-  return parseDeepSeekBalance(json);
+  return parseDeepSeekBalance(json, settings.usdToCnyRate);
 }
 
-function parseDeepSeekBalance(json) {
+function parseDeepSeekBalance(json, usdToCnyRate = 0) {
   const balances = json.balance_infos || [];
   const item =
     balances.find((value) => value.currency === "CNY") || balances[0];
   if (!item) throw new Error("响应中没有余额");
   return {
-    ...money(item.total_balance, item.currency),
-    detail: `充值 ${money(item.topped_up_balance, item.currency).display}`,
+    ...money(item.total_balance, item.currency, usdToCnyRate),
+    detail:
+      `充值 ${money(item.topped_up_balance, item.currency, usdToCnyRate).display}`,
     secondaryDetail:
-      `赠送 ${money(item.granted_balance, item.currency).display}`,
+      `赠送 ${money(item.granted_balance, item.currency, usdToCnyRate).display}`,
   };
 }
 
@@ -269,18 +291,20 @@ async function fetchKimi(key, settings) {
   );
   return parseKimiBalance(
     json,
-    settings.kimiRegion === "international" ? "USD" : "CNY"
+    settings.kimiRegion === "international" ? "USD" : "CNY",
+    settings.usdToCnyRate
   );
 }
 
-function parseKimiBalance(json, currency) {
+function parseKimiBalance(json, currency, usdToCnyRate = 0) {
   if (json.status === false) throw new Error(json.message || "查询失败");
   const data = json.data || {};
   return {
-    ...money(data.available_balance, currency),
-    detail: `现金 ${money(data.cash_balance, currency).display}`,
+    ...money(data.available_balance, currency, usdToCnyRate),
+    detail:
+      `现金 ${money(data.cash_balance, currency, usdToCnyRate).display}`,
     secondaryDetail:
-      `代金券 ${money(data.voucher_balance, currency).display}`,
+      `代金券 ${money(data.voucher_balance, currency, usdToCnyRate).display}`,
   };
 }
 
@@ -564,6 +588,10 @@ function addBalanceCard(parent, item, palette) {
       ? palette.muted
       : palette.white;
   addText(card, item.display, 24, valueColor, "bold");
+  if (item.convertedDisplay) {
+    card.addSpacer(2);
+    addText(card, item.convertedDisplay, 11, palette[item.color], "bold");
+  }
   card.addSpacer(3);
   addText(
     card,
@@ -761,6 +789,9 @@ async function configure(settings) {
     sheet.addAction(
       `Kimi 区域：${settings.kimiRegion === "cn" ? "中国站" : "国际站"}`
     );
+    sheet.addAction(
+      `USD→CNY：${settings.usdToCnyRate > 0 ? settings.usdToCnyRate : "关闭"}`
+    );
     sheet.addDestructiveAction("恢复默认 UI");
     sheet.addCancelAction("完成");
     const choice = await sheet.presentSheet();
@@ -820,6 +851,15 @@ async function configure(settings) {
         settings.kimiRegion,
         [["cn", "中国站（CNY）"], ["international", "国际站（USD）"]]
       );
+    } else if (choice === keyProviders.length + 8) {
+      const value = await promptText(
+        "USD → CNY 参考汇率",
+        "仅用于本地估算；填 0 关闭人民币并列显示",
+        settings.usdToCnyRate
+      );
+      if (value !== null && Number.isFinite(Number(value))) {
+        settings.usdToCnyRate = Math.max(0, Number(value));
+      }
     } else {
       settings.themeMode = "dark";
       settings.refreshMinutes = CONFIG.refreshMinutes;
@@ -827,6 +867,7 @@ async function configure(settings) {
       settings.kimiRegion = CONFIG.kimiRegion;
       settings.hiddenProviders = [...CONFIG.hiddenProviders];
       settings.providerOrder = [...CONFIG.providerOrder];
+      settings.usdToCnyRate = CONFIG.usdToCnyRate;
     }
     saveSettings(settings);
   }

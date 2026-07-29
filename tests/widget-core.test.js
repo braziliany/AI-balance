@@ -11,6 +11,7 @@ const source = fs
     `globalThis.__widgetTestApi = {
       CONFIG,
       changeText,
+      formatAmount,
       applyHistory,
       historicalValue,
       isLowBalance,
@@ -42,6 +43,11 @@ assert.equal(api.parseKimiBalance(fixture("kimi-balance"), "CNY").display, "¥8.
 const codex = api.parseCodexQuota(fixture("codex-usage"));
 assert.equal(codex.display, "77%");
 assert.match(codex.detail, /59%/);
+assert.equal(api.formatAmount(12345.67), "12,346");
+assert.equal(
+  api.parseKimiBalance(fixture("kimi-balance"), "USD", 7.2).convertedDisplay,
+  "≈¥58.10"
+);
 
 assert.equal(api.remainingPercent({ used_percent: 23.4 }), 77);
 assert.equal(api.remainingPercent({ used_percent: 120 }), 0);

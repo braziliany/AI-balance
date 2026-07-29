@@ -1,0 +1,21 @@
+{
+  "version": "1.7.0",
+  "changelogUrl": "https://raw.githubusercontent.com/braziliany/AI-balance/main/CHANGELOG.md",
+  "resources": [
+    {
+      "scriptName": "LPL-Design-System",
+      "sourceUrl": "https://raw.githubusercontent.com/braziliany/AI-balance/main/LPL-Design-System.js",
+      "marker": "LPL Scriptable Design System"
+    },
+    {
+      "scriptName": "AI-Balance",
+      "sourceUrl": "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance.js",
+      "marker": "importModule(\"LPL-Design-System\")"
+    },
+    {
+      "scriptName": "AI Balance Installer",
+      "sourceUrl": "https://raw.githubusercontent.com/braziliany/AI-balance/main/Installer.js",
+      "marker": "AI Balance 一键安装器"
+    }
+  ]
+}

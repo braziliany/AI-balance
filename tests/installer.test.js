@@ -13,6 +13,7 @@ const source = fs
       compareVersions,
       extractReleaseNotes,
       extractVersion,
+      normalizeManifest,
     };`
   );
 const context = {};
@@ -28,21 +29,35 @@ assert.deepEqual(
 assert.match(resources[0].sourceUrl, /LPL-Design-System\.js$/);
 assert.match(resources[1].sourceUrl, /AI-Balance\.js$/);
 assert.match(resources[2].sourceUrl, /Installer\.js$/);
+const manifest = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")
+);
+assert.equal(
+  context.__installerTestApi.normalizeManifest(manifest).version,
+  "1.7.0"
+);
+assert.throws(
+  () => context.__installerTestApi.normalizeManifest({
+    version: "1.7.0",
+    resources: [{ scriptName: "bad", sourceUrl: "http://example.com", marker: "x" }],
+  }),
+  /非 HTTPS/
+);
 assert.equal(
   context.__installerTestApi.extractVersion(
-    'const APP = { version: "1.6.0" };'
+    'const APP = { version: "1.7.0" };'
   ),
-  "1.6.0"
+  "1.7.0"
 );
-assert.equal(context.__installerTestApi.compareVersions("1.5.0", "1.6.0"), -1);
-assert.equal(context.__installerTestApi.compareVersions("1.6.0", "1.6.0"), 0);
-assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.6.0"), 1);
+assert.equal(context.__installerTestApi.compareVersions("1.6.0", "1.7.0"), -1);
+assert.equal(context.__installerTestApi.compareVersions("1.7.0", "1.7.0"), 0);
+assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.7.0"), 1);
 assert.equal(
   context.__installerTestApi.extractReleaseNotes(
-    "# 更新日志\n\n## 1.6.0 · 2026-07-29\n\n- 日周变化\n- 历史清理\n\n## 1.5.0 · 2026-07-29",
-    "1.6.0"
+    "# 更新日志\n\n## 1.7.0 · 2026-07-30\n\n- 本地货币\n- 远程 manifest\n\n## 1.6.0 · 2026-07-29",
+    "1.7.0"
   ),
-  "- 日周变化\n- 历史清理"
+  "- 本地货币\n- 远程 manifest"
 );
 
 console.log("installer: ok");

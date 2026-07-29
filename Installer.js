@@ -10,7 +10,9 @@
  */
 
 const CONFIG = {
-  version: "1.6.0",
+  version: "1.7.0",
+  manifestUrl:
+    "https://raw.githubusercontent.com/braziliany/AI-balance/main/manifest.json",
   changelogUrl:
     "https://raw.githubusercontent.com/braziliany/AI-balance/main/CHANGELOG.md",
   resources: [
@@ -34,6 +36,27 @@ const CONFIG = {
     },
   ],
 };
+
+function normalizeManifest(value) {
+  if (!value || typeof value !== "object") {
+    throw new Error("远程 manifest 格式无效");
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(String(value.version || ""))) {
+    throw new Error("远程 manifest 缺少有效版本号");
+  }
+  if (!Array.isArray(value.resources) || !value.resources.length) {
+    throw new Error("远程 manifest 没有安装资源");
+  }
+  for (const resource of value.resources) {
+    if (!resource.scriptName || !resource.sourceUrl || !resource.marker) {
+      throw new Error("远程 manifest 资源字段不完整");
+    }
+    if (!String(resource.sourceUrl).startsWith("https://")) {
+      throw new Error("远程 manifest 包含非 HTTPS 地址");
+    }
+  }
+  return value;
+}
 
 function extractVersion(content) {
   const match = String(content || "").match(
@@ -85,6 +108,21 @@ async function downloadResource(resource) {
   return { ...resource, content };
 }
 
+async function loadReleaseConfig() {
+  try {
+    return normalizeManifest(
+      JSON.parse(await downloadText(CONFIG.manifestUrl))
+    );
+  } catch (error) {
+    console.warn(`远程 manifest 获取失败，使用内置资源：${error}`);
+    return {
+      version: CONFIG.version,
+      changelogUrl: CONFIG.changelogUrl,
+      resources: CONFIG.resources,
+    };
+  }
+}
+
 async function readExistingFile(fm, path) {
   if (!fm.fileExists(path)) return null;
   if (!fm.isFileDownloaded(path)) {
@@ -123,15 +161,16 @@ async function installDownloads(downloads) {
 
 async function main() {
   try {
+    const release = await loadReleaseConfig();
     // 全部下载并验证成功后才写入本地，避免半安装状态。
     const downloads = await Promise.all(
-      CONFIG.resources.map(downloadResource)
+      release.resources.map(downloadResource)
     );
     const mainResource = downloads.find(
       (resource) => resource.scriptName === "AI-Balance"
     );
     const remoteVersion =
-      extractVersion(mainResource?.content) || CONFIG.version;
+      extractVersion(mainResource?.content) || release.version;
 
     const fm = FileManager.iCloud();
     const localMainPath = fm.joinPath(
@@ -147,7 +186,7 @@ async function main() {
     let releaseNotes = "";
     try {
       releaseNotes = extractReleaseNotes(
-        await downloadText(CONFIG.changelogUrl),
+        await downloadText(release.changelogUrl || CONFIG.changelogUrl),
         remoteVersion
       );
     } catch (error) {
