@@ -24,7 +24,9 @@
 - OpenAI：组织 Admin Key，官方 Costs API 不接受普通项目 Key。
 - SerpBase：无需把 Key 填入本脚本。
 
-推荐中号或大号组件；小号显示前三个已配置项目。请求失败时会使用 24 小时内的本地缓存，并标注为“缓存数据”。
+推荐使用与 LPL Schedule 相同的中号组件；大号组件会使用余额卡片加明细列表，小号显示前三个已配置项目。请求失败时会使用 24 小时内的本地缓存，并标注为“缓存数据”。
+
+如果组件意外显示为浅色，请在 Scriptable App 内运行脚本，选择“主题”，再选择“深蓝主题（与 LPL 一致）”。iOS 组件尺寸由添加组件时选择，脚本无法把已经添加的大号组件自动改成中号。
 
 ## 数据接口
 
@@ -32,4 +34,3 @@
 - StepFun：`GET https://api.stepfun.com/v1/accounts`
 - OpenAI：`GET https://api.openai.com/v1/organization/costs`
 - Kimi：`GET https://api.moonshot.cn/v1/users/me/balance`
-

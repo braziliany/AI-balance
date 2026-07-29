@@ -12,7 +12,8 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.0.0",
+  version: "1.1.0",
+  settingsVersion: 2,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
 };
@@ -102,11 +103,21 @@ function settingsPath() {
 
 function loadSettings() {
   const path = settingsPath();
-  if (!FileManager.local().fileExists(path)) return { ...CONFIG };
+  if (!FileManager.local().fileExists(path)) {
+    return { ...CONFIG, settingsVersion: APP.settingsVersion };
+  }
   try {
-    return { ...CONFIG, ...JSON.parse(FileManager.local().readString(path)) };
+    const stored = JSON.parse(FileManager.local().readString(path));
+    // v1 的主题菜单是“每点击一次循环切换”，容易误切到浅色。
+    // 第一次升级到 v2 时恢复与 LPL Schedule 相同的深蓝主题。
+    if (!stored.settingsVersion) stored.themeMode = "dark";
+    return {
+      ...CONFIG,
+      ...stored,
+      settingsVersion: APP.settingsVersion,
+    };
   } catch (_) {
-    return { ...CONFIG };
+    return { ...CONFIG, settingsVersion: APP.settingsVersion };
   }
 }
 
@@ -328,6 +339,30 @@ function addProviderRow(parent, item, palette, compact = false) {
   addText(row, item.display, compact ? 14 : 17, color, "bold");
 }
 
+function addBalanceCard(parent, item, palette) {
+  const card = parent.addStack();
+  card.layoutVertically();
+  card.setPadding(11, 12, 10, 12);
+  card.cornerRadius = 12;
+  card.backgroundColor = new Color(palette.divider, 0.07);
+
+  const top = card.addStack();
+  top.centerAlignContent();
+  addText(top, item.shortName, 10, palette[item.color], "bold");
+  top.addSpacer(7);
+  addText(top, item.name, 13, palette.secondary, "bold");
+  card.addSpacer(7);
+
+  const valueColor =
+    item.status === "error" || item.status === "unset"
+      ? palette.muted
+      : palette.white;
+  addText(card, item.display, 24, valueColor, "bold");
+  card.addSpacer(3);
+  addText(card, item.detail, 10, palette.secondary);
+  return card;
+}
+
 function createWidget(items, settings) {
   const widget = new ListWidget();
   const palette = DesignSystem.resolvePalette(settings.themeMode);
@@ -347,9 +382,15 @@ function createWidget(items, settings) {
       addText(widget, "请在 App 内运行脚本完成配置", 12, palette.secondary);
     }
   } else if (family === "large") {
-    for (const item of items) {
+    const highlights = widget.addStack();
+    addBalanceCard(highlights, items[0], palette);
+    highlights.addSpacer(10);
+    addBalanceCard(highlights, items[1], palette);
+    widget.addSpacer(13);
+
+    for (const item of items.slice(2)) {
       addProviderRow(widget, item, palette, false);
-      widget.addSpacer(11);
+      widget.addSpacer(12);
     }
   } else {
     const columns = widget.addStack();
@@ -396,6 +437,21 @@ async function promptText(title, message, value = "", secure = false) {
   return index === -1 ? null : alert.textFieldValue(0).trim();
 }
 
+async function chooseThemeMode(current) {
+  const modes = [
+    ["dark", "深蓝主题（与 LPL 一致）"],
+    ["light", "浅色主题"],
+    ["auto", "跟随系统"],
+  ];
+  const alert = new Alert();
+  alert.title = "组件主题";
+  alert.message = `当前：${current}`;
+  modes.forEach(([, label]) => alert.addAction(label));
+  alert.addCancelAction("取消");
+  const choice = await alert.presentSheet();
+  return choice === -1 ? current : modes[choice][0];
+}
+
 async function configure(settings) {
   while (true) {
     const sheet = new Alert();
@@ -409,6 +465,7 @@ async function configure(settings) {
     sheet.addAction(`OpenAI 月预算：$${settings.openAIMonthlyBudgetUSD}`);
     sheet.addAction(`SerpBase 剩余额度：${settings.serpBaseCredits}`);
     sheet.addAction(`主题：${settings.themeMode}`);
+    sheet.addDestructiveAction("恢复默认 UI");
     sheet.addCancelAction("完成");
     const choice = await sheet.presentSheet();
     if (choice === -1) break;
@@ -441,13 +498,12 @@ async function configure(settings) {
       if (value !== null && Number.isFinite(Number(value))) {
         settings.serpBaseCredits = Math.max(0, Number(value));
       }
+    } else if (choice === keyProviders.length + 2) {
+      settings.themeMode = await chooseThemeMode(settings.themeMode);
     } else {
-      settings.themeMode =
-        settings.themeMode === "dark"
-          ? "light"
-          : settings.themeMode === "light"
-          ? "auto"
-          : "dark";
+      settings.themeMode = "dark";
+      settings.refreshMinutes = CONFIG.refreshMinutes;
+      settings.cacheHours = CONFIG.cacheHours;
     }
     saveSettings(settings);
   }
