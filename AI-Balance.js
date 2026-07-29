@@ -12,8 +12,8 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.3.0",
-  settingsVersion: 3,
+  version: "1.4.0",
+  settingsVersion: 4,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
 };
@@ -34,6 +34,12 @@ const CONFIG = {
   cacheHours: 24,
   codexAccountId: "",
   serpBaseCredits: 0,
+  kimiRegion: "cn",
+  hiddenProviders: [],
+  providerOrder: ["deepseek", "stepfun", "codex", "serpbase", "kimi"],
+  lowMoneyThreshold: 10,
+  lowQuotaThreshold: 20,
+  lowCreditsThreshold: 100,
 };
 
 const PROVIDERS = [
@@ -43,6 +49,7 @@ const PROVIDERS = [
     shortName: "DS",
     color: "yellow",
     keyLabel: "DeepSeek API Key",
+    dashboardUrl: "https://platform.deepseek.com/usage",
     fetch: fetchDeepSeek,
   },
   {
@@ -51,6 +58,7 @@ const PROVIDERS = [
     shortName: "SF",
     color: "orange",
     keyLabel: "StepFun API Key",
+    dashboardUrl: "https://platform.stepfun.com/",
     fetch: fetchStepFun,
   },
   {
@@ -59,6 +67,7 @@ const PROVIDERS = [
     shortName: "CX",
     color: "red",
     keyLabel: "Codex Access Token",
+    dashboardUrl: "https://chatgpt.com/codex/settings/usage",
     fetch: fetchCodex,
   },
   {
@@ -67,6 +76,7 @@ const PROVIDERS = [
     shortName: "SB",
     color: "yellow",
     manual: true,
+    dashboardUrl: "https://serpbase.dev/dashboard",
     fetch: fetchSerpBase,
   },
   {
@@ -75,6 +85,7 @@ const PROVIDERS = [
     shortName: "KM",
     color: "orange",
     keyLabel: "Kimi API Key",
+    dashboardUrl: "https://platform.moonshot.cn/console/account",
     fetch: fetchKimi,
   },
 ];
@@ -111,9 +122,22 @@ function loadSettings() {
     // v1 的主题菜单是“每点击一次循环切换”，容易误切到浅色。
     // 第一次升级到 v2 时恢复与 LPL Schedule 相同的深蓝主题。
     if (!stored.settingsVersion) stored.themeMode = "dark";
+    const providerIds = PROVIDERS.map((provider) => provider.id);
+    const storedOrder = Array.isArray(stored.providerOrder)
+      ? stored.providerOrder.filter((id) => providerIds.includes(id))
+      : [];
+    const providerOrder = [
+      ...storedOrder,
+      ...providerIds.filter((id) => !storedOrder.includes(id)),
+    ];
+    const hiddenProviders = Array.isArray(stored.hiddenProviders)
+      ? stored.hiddenProviders.filter((id) => providerIds.includes(id))
+      : [];
     return {
       ...CONFIG,
       ...stored,
+      providerOrder,
+      hiddenProviders,
       settingsVersion: APP.settingsVersion,
     };
   } catch (_) {
@@ -197,16 +221,21 @@ async function fetchStepFun(key) {
   return { ...result, detail: "可用余额" };
 }
 
-async function fetchKimi(key) {
+async function fetchKimi(key, settings) {
+  const host =
+    settings.kimiRegion === "international"
+      ? "https://api.moonshot.ai"
+      : "https://api.moonshot.cn";
   const json = await requestJSON(
-    "https://api.moonshot.cn/v1/users/me/balance",
+    `${host}/v1/users/me/balance`,
     key
   );
   if (json.status === false) throw new Error(json.message || "查询失败");
   const data = json.data || {};
+  const currency = settings.kimiRegion === "international" ? "USD" : "CNY";
   return {
-    ...money(data.available_balance, "CNY"),
-    detail: `现金 ${money(data.cash_balance, "CNY").display}`,
+    ...money(data.available_balance, currency),
+    detail: `现金 ${money(data.cash_balance, currency).display}`,
   };
 }
 
@@ -278,11 +307,28 @@ async function fetchSerpBase(_, settings) {
   };
 }
 
+function orderedProviders(settings) {
+  const byId = Object.fromEntries(
+    PROVIDERS.map((provider) => [provider.id, provider])
+  );
+  return settings.providerOrder
+    .filter((id) => !settings.hiddenProviders.includes(id))
+    .map((id) => byId[id])
+    .filter(Boolean);
+}
+
+function isLowBalance(item, settings) {
+  if (item.status !== "ok" && item.status !== "cached") return false;
+  if (item.unit === "%") return item.value <= settings.lowQuotaThreshold;
+  if (item.unit === "次") return item.value <= settings.lowCreditsThreshold;
+  return item.value <= settings.lowMoneyThreshold;
+}
+
 async function loadBalances(settings) {
   const cache = readCache();
   const now = Date.now();
   const results = await Promise.all(
-    PROVIDERS.map(async (provider) => {
+    orderedProviders(settings).map(async (provider) => {
       const key = provider.manual ? "" : getSecret(provider.id);
       if (!provider.manual && !key) {
         return { ...provider, status: "unset", display: "未配置", detail: "点击脚本配置" };
@@ -290,6 +336,7 @@ async function loadBalances(settings) {
       try {
         const balance = await provider.fetch(key, settings);
         const item = { ...provider, ...balance, status: "ok", updatedAt: now };
+        item.isLow = isLowBalance(item, settings);
         cache[provider.id] = item;
         return item;
       } catch (error) {
@@ -297,7 +344,9 @@ async function loadBalances(settings) {
         const freshEnough =
           old && now - Number(old.updatedAt || 0) < settings.cacheHours * 3600000;
         if (freshEnough) {
-          return { ...old, ...provider, status: "cached", detail: "缓存数据" };
+          const item = { ...old, ...provider, status: "cached", detail: "缓存数据" };
+          item.isLow = isLowBalance(item, settings);
+          return item;
         }
         return {
           ...provider,
@@ -337,6 +386,7 @@ function addHeader(widget, palette, settings) {
 
 function addProviderRow(parent, item, palette, compact = false) {
   const row = parent.addStack();
+  row.url = item.dashboardUrl;
   row.centerAlignContent();
   const badge = row.addStack();
   badge.size = new Size(compact ? 26 : 30, compact ? 20 : 22);
@@ -356,7 +406,9 @@ function addProviderRow(parent, item, palette, compact = false) {
   addText(info, item.name, compact ? 12 : 14, palette.white, "bold");
   if (!compact) addText(info, item.detail, 10, palette.secondary);
   row.addSpacer();
-  const color =
+  const color = item.isLow
+    ? palette.red
+    :
     item.status === "error" || item.status === "unset"
       ? palette.muted
       : palette.white;
@@ -365,6 +417,7 @@ function addProviderRow(parent, item, palette, compact = false) {
 
 function addBalanceCard(parent, item, palette) {
   const card = parent.addStack();
+  card.url = item.dashboardUrl;
   card.layoutVertically();
   card.setPadding(11, 12, 10, 12);
   card.cornerRadius = 12;
@@ -377,7 +430,9 @@ function addBalanceCard(parent, item, palette) {
   addText(top, item.name, 13, palette.secondary, "bold");
   card.addSpacer(7);
 
-  const valueColor =
+  const valueColor = item.isLow
+    ? palette.red
+    :
     item.status === "error" || item.status === "unset"
       ? palette.muted
       : palette.white;
@@ -407,10 +462,12 @@ function createWidget(items, settings) {
     }
   } else if (family === "large") {
     const highlights = widget.addStack();
-    addBalanceCard(highlights, items[0], palette);
-    highlights.addSpacer(10);
-    addBalanceCard(highlights, items[1], palette);
-    widget.addSpacer(13);
+    if (items[0]) addBalanceCard(highlights, items[0], palette);
+    if (items[1]) {
+      highlights.addSpacer(10);
+      addBalanceCard(highlights, items[1], palette);
+    }
+    if (items.length) widget.addSpacer(13);
 
     for (const item of items.slice(2)) {
       addProviderRow(widget, item, palette, false);
@@ -431,11 +488,15 @@ function createWidget(items, settings) {
   }
 
   widget.addSpacer();
-  const updated = new Date();
+  const lastSuccess = items.reduce(
+    (latest, item) => Math.max(latest, Number(item.updatedAt || 0)),
+    0
+  );
+  const updated = lastSuccess ? new Date(lastSuccess) : new Date();
   const footer = widget.addStack();
   addText(
     footer,
-    `${updated.getMonth() + 1}/${updated.getDate()} ${String(
+    `${lastSuccess ? "成功 " : ""}${updated.getMonth() + 1}/${updated.getDate()} ${String(
       updated.getHours()
     ).padStart(2, "0")}:${String(updated.getMinutes()).padStart(2, "0")}`,
     9,
@@ -476,6 +537,55 @@ async function chooseThemeMode(current) {
   return choice === -1 ? current : modes[choice][0];
 }
 
+async function chooseVisibleProviders(currentHidden) {
+  const hidden = new Set(currentHidden);
+  while (true) {
+    const alert = new Alert();
+    alert.title = "显示服务";
+    alert.message = "点击切换；至少保留一个服务";
+    PROVIDERS.forEach((provider) =>
+      alert.addAction(
+        `${hidden.has(provider.id) ? "○" : "✓"} ${provider.name}`
+      )
+    );
+    alert.addCancelAction("完成");
+    const choice = await alert.presentSheet();
+    if (choice === -1) return [...hidden];
+    const id = PROVIDERS[choice].id;
+    if (hidden.has(id)) hidden.delete(id);
+    else if (hidden.size < PROVIDERS.length - 1) hidden.add(id);
+  }
+}
+
+async function chooseProviderOrder(currentOrder) {
+  const order = [...currentOrder];
+  while (true) {
+    const alert = new Alert();
+    alert.title = "服务顺序";
+    alert.message = "点击服务使其上移一位";
+    order.forEach((id, index) => {
+      const provider = PROVIDERS.find((item) => item.id === id);
+      alert.addAction(`${index + 1}. ${provider.name}`);
+    });
+    alert.addCancelAction("完成");
+    const choice = await alert.presentSheet();
+    if (choice === -1) return order;
+    if (choice > 0) {
+      [order[choice - 1], order[choice]] = [order[choice], order[choice - 1]];
+    }
+  }
+}
+
+async function chooseOption(title, current, options) {
+  const alert = new Alert();
+  alert.title = title;
+  alert.message = `当前：${current}`;
+  options.forEach(([value, label]) => alert.addAction(label));
+  alert.addCancelAction("取消");
+  const choice = await alert.presentSheet();
+  return choice === -1 ? current : options[choice][0];
+}
+
 async function configure(settings) {
   while (true) {
     const sheet = new Alert();
@@ -491,6 +601,15 @@ async function configure(settings) {
     );
     sheet.addAction(`SerpBase 剩余额度：${settings.serpBaseCredits}`);
     sheet.addAction(`主题：${settings.themeMode}`);
+    sheet.addAction(
+      `显示服务：${PROVIDERS.length - settings.hiddenProviders.length} 个`
+    );
+    sheet.addAction("服务顺序");
+    sheet.addAction(`刷新频率：${settings.refreshMinutes} 分钟`);
+    sheet.addAction(`缓存时长：${settings.cacheHours} 小时`);
+    sheet.addAction(
+      `Kimi 区域：${settings.kimiRegion === "cn" ? "中国站" : "国际站"}`
+    );
     sheet.addDestructiveAction("恢复默认 UI");
     sheet.addCancelAction("完成");
     const choice = await sheet.presentSheet();
@@ -524,10 +643,39 @@ async function configure(settings) {
       }
     } else if (choice === keyProviders.length + 2) {
       settings.themeMode = await chooseThemeMode(settings.themeMode);
+    } else if (choice === keyProviders.length + 3) {
+      settings.hiddenProviders = await chooseVisibleProviders(
+        settings.hiddenProviders
+      );
+    } else if (choice === keyProviders.length + 4) {
+      settings.providerOrder = await chooseProviderOrder(
+        settings.providerOrder
+      );
+    } else if (choice === keyProviders.length + 5) {
+      settings.refreshMinutes = await chooseOption(
+        "刷新频率",
+        settings.refreshMinutes,
+        [[15, "15 分钟"], [30, "30 分钟"], [60, "60 分钟"]]
+      );
+    } else if (choice === keyProviders.length + 6) {
+      settings.cacheHours = await chooseOption(
+        "缓存时长",
+        settings.cacheHours,
+        [[6, "6 小时"], [12, "12 小时"], [24, "24 小时"], [48, "48 小时"]]
+      );
+    } else if (choice === keyProviders.length + 7) {
+      settings.kimiRegion = await chooseOption(
+        "Kimi 区域",
+        settings.kimiRegion,
+        [["cn", "中国站（CNY）"], ["international", "国际站（USD）"]]
+      );
     } else {
       settings.themeMode = "dark";
       settings.refreshMinutes = CONFIG.refreshMinutes;
       settings.cacheHours = CONFIG.cacheHours;
+      settings.kimiRegion = CONFIG.kimiRegion;
+      settings.hiddenProviders = [...CONFIG.hiddenProviders];
+      settings.providerOrder = [...CONFIG.providerOrder];
     }
     saveSettings(settings);
   }
