@@ -3,6 +3,6 @@
   "version": "1.9.0",
   "private": true,
   "scripts": {
-    "test": "node tests/installer.test.js && node tests/widget-core.test.js"
+    "test": "node tests/installer.test.js && node tests/widget-core.test.js && node tests/release-integrity.test.js"
   }
 }
