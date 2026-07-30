@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.9.1",
+  version: "2.0.0",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -949,6 +949,174 @@ async function presentDiagnostics(settings) {
   }
 }
 
+function settingsPageHTML(settings) {
+  const providers = PROVIDERS.map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    shortName: provider.shortName,
+    color: provider.color,
+    manual: Boolean(provider.manual),
+    keyLabel: provider.keyLabel || "",
+    configured: provider.manual ? true : Boolean(getSecret(provider.id)),
+  }));
+  const initial = JSON.stringify({
+    version: APP.version,
+    settings,
+    defaults: CONFIG,
+    providers,
+  }).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+:root{color-scheme:light dark;--bg:#f2f2f7;--card:#fff;--text:#111827;--sub:#8e8e93;--line:#e5e5ea;--blue:#0a84ff;--red:#ff3b30}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--sub:#98989d;--line:#38383a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+main{max-width:680px;margin:auto;padding:28px 16px calc(52px + env(safe-area-inset-bottom))}
+h1{font-size:30px;margin:4px 4px 2px}.version{color:var(--sub);margin:0 4px 26px;font-size:14px}
+.section{margin:0 0 24px}.section-title{margin:0 12px 8px;color:var(--sub);font-size:13px;text-transform:uppercase}
+.card{background:var(--card);border-radius:14px;overflow:hidden}.row{display:flex;align-items:center;gap:12px;min-height:54px;padding:8px 14px;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}
+.icon{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700;flex:0 0 auto}.yellow{background:#d59f00}.orange{background:#ff7043}.red{background:#ef476f}.blue{background:#0a84ff}.green{background:#34c759}.purple{background:#8957e5}.gray{background:#8e8e93}
+.label{min-width:0;flex:1}.label strong{display:block;font-size:16px}.hint{display:block;color:var(--sub);font-size:12px;margin-top:2px}
+input,select{max-width:48%;border:0;background:transparent;color:var(--sub);font:15px -apple-system;text-align:right;outline:none}input[type=password],input[type=text],input[type=number]{border-bottom:1px solid var(--line);padding:7px 2px}
+.switch{position:relative;width:50px;height:30px;flex:0 0 auto}.switch input{display:none}.slider{position:absolute;inset:0;background:#d1d1d6;border-radius:16px;transition:.2s}.slider:before{content:"";position:absolute;width:26px;height:26px;left:2px;top:2px;background:#fff;border-radius:50%;box-shadow:0 1px 3px #0004;transition:.2s}.switch input:checked+.slider{background:#34c759}.switch input:checked+.slider:before{transform:translateX(20px)}
+.order-row{display:flex;align-items:center;gap:8px}.order-buttons button{border:0;border-radius:7px;background:var(--bg);color:var(--blue);font-size:17px;width:32px;height:30px}
+button.action{border:0;background:transparent;color:var(--blue);font:16px -apple-system;padding:8px 0}.danger{color:var(--red)!important}
+.secret-input{display:none}.secret-input.open{display:block}.secret-actions{display:flex;gap:10px;align-items:center}.status{color:var(--sub);font-size:14px}
+.notice{color:var(--sub);font-size:12px;line-height:1.5;margin:8px 12px}.saved{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1c1c1ee8;color:#fff;padding:10px 18px;border-radius:22px;font-size:14px;opacity:0;pointer-events:none;transition:.2s}.saved.show{opacity:1}
+</style>
+</head>
+<body><main>
+<h1>AI Balance</h1><p class="version">设置中心 · v<span id="version"></span> · 关闭页面时自动保存</p>
+<section class="section"><p class="section-title">账户与额度</p><div class="card" id="accounts"></div><p class="notice">已有密钥不会载入网页；留空代表保持不变。新输入关闭页面后直接写入 iOS Keychain。</p></section>
+<section class="section"><p class="section-title">显示服务与顺序</p><div class="card" id="providers"></div></section>
+<section class="section"><p class="section-title">外观</p><div class="card">
+<label class="row"><span class="icon purple">UI</span><span class="label"><strong>主题</strong></span><select id="themeMode"><option value="dark">深蓝主题</option><option value="system">跟随系统</option></select></label>
+<label class="row"><span class="icon purple">□</span><span class="label"><strong>预览尺寸</strong></span><select id="previewFamily"><option value="small">小号</option><option value="medium">中号</option><option value="large">大号</option></select></label>
+</div></section>
+<section class="section"><p class="section-title">刷新与区域</p><div class="card">
+<label class="row"><span class="icon blue">↻</span><span class="label"><strong>刷新频率</strong></span><select id="refreshMinutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option></select></label>
+<label class="row"><span class="icon blue">C</span><span class="label"><strong>缓存时长</strong></span><select id="cacheHours"><option value="6">6 小时</option><option value="12">12 小时</option><option value="24">24 小时</option><option value="48">48 小时</option></select></label>
+<label class="row"><span class="icon green">KM</span><span class="label"><strong>Kimi 区域</strong></span><select id="kimiRegion"><option value="cn">中国站</option><option value="international">国际站</option></select></label>
+<label class="row"><span class="icon green">¥</span><span class="label"><strong>USD→CNY 汇率</strong><span class="hint">0 表示关闭人民币估算</span></span><input id="usdToCnyRate" type="number" min="0" step="0.01"></label>
+</div></section>
+<section class="section"><p class="section-title">警示阈值</p><div class="card">
+<label class="row"><span class="icon red">¥</span><span class="label"><strong>余额</strong></span><input id="lowMoneyThreshold" type="number" min="0" step="1"></label>
+<label class="row"><span class="icon red">%</span><span class="label"><strong>Codex 剩余</strong></span><input id="lowQuotaThreshold" type="number" min="0" max="100" step="1"></label>
+<label class="row"><span class="icon red">SB</span><span class="label"><strong>SerpBase credits</strong></span><input id="lowCreditsThreshold" type="number" min="0" step="1"></label>
+</div></section>
+<section class="section"><p class="section-title">工具</p><div class="card">
+<div class="row"><span class="icon blue">↻</span><span class="label"><strong>刷新品牌图标</strong><span class="hint">关闭页面后清除并重新下载</span></span><button class="action" id="refreshLogos">刷新</button></div>
+<div class="row"><span class="icon gray">≡</span><span class="label"><strong>经典设置菜单</strong><span class="hint">使用原来的分步菜单</span></span><button class="action" id="legacyMenu">打开</button></div>
+<div class="row"><span class="icon red">↺</span><span class="label"><strong>恢复默认 UI</strong><span class="hint">不会删除密钥和额度</span></span><button class="action danger" id="resetUI">恢复</button></div>
+</div></section>
+</main><div class="saved" id="toast"></div>
+<script>
+const initial=${initial}; const state={refreshLogos:false,legacyMenu:false,resetUI:false,clearSecrets:{},secrets:{}};
+const $=id=>document.getElementById(id); $("version").textContent=initial.version;
+const setValue=(id,value)=>{const node=$(id);if(node)node.value=String(value)};
+["themeMode","previewFamily","refreshMinutes","cacheHours","kimiRegion","usdToCnyRate","lowMoneyThreshold","lowQuotaThreshold","lowCreditsThreshold"].forEach(id=>setValue(id,initial.settings[id]));
+const toast=text=>{const el=$("toast");el.textContent=text;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),1400)};
+const accounts=$("accounts");
+initial.providers.forEach(p=>{if(p.manual){accounts.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">手动维护剩余额度</span></span><input id="manual-'+p.id+'" type="number" min="0" step="1"></label>');setValue("manual-"+p.id,initial.settings.serpBaseCredits);return}
+const row=document.createElement("div");row.className="row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">'+(p.configured?'已配置':'未配置')+'</span><input class="secret-input" id="secret-'+p.id+'" type="password" placeholder="输入新密钥"></span><span class="secret-actions"><button class="action edit">编辑</button>'+(p.configured?'<button class="action danger clear">清除</button>':'')+'</span>';
+row.querySelector(".edit").onclick=()=>row.querySelector(".secret-input").classList.toggle("open");const clear=row.querySelector(".clear");if(clear)clear.onclick=()=>{state.clearSecrets[p.id]=true;row.querySelector(".hint").textContent="关闭后清除";toast("已标记清除")};accounts.appendChild(row)});
+accounts.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex Account ID</strong><span class="hint">通常从 Token 自动识别</span></span><input id="codexAccountId" type="text"></label>');
+setValue("codexAccountId",initial.settings.codexAccountId||"");
+const providerBox=$("providers");let order=[...initial.settings.providerOrder];const hidden=new Set(initial.settings.hiddenProviders);
+function drawProviders(){providerBox.innerHTML="";order.forEach((id,index)=>{const p=initial.providers.find(x=>x.id===id);const row=document.createElement("div");row.className="row order-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong></span><label class="switch"><input type="checkbox" '+(!hidden.has(id)?"checked":"")+'><span class="slider"></span></label><span class="order-buttons"><button data-d="-1">↑</button><button data-d="1">↓</button></span>';row.querySelector("input").onchange=e=>e.target.checked?hidden.delete(id):hidden.add(id);row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const next=index+Number(b.dataset.d);if(next<0||next>=order.length)return;[order[index],order[next]]=[order[next],order[index]];drawProviders()});providerBox.appendChild(row)})}drawProviders();
+$("refreshLogos").onclick=()=>{state.refreshLogos=true;toast("关闭后刷新图标")};$("legacyMenu").onclick=()=>{state.legacyMenu=true;toast("关闭后打开经典菜单")};$("resetUI").onclick=()=>{state.resetUI=confirm("恢复默认 UI 设置？密钥和额度不会被删除。");if(state.resetUI)toast("关闭后恢复默认")};
+window.__exportSettings=()=>{initial.providers.filter(p=>!p.manual).forEach(p=>{const value=$("secret-"+p.id).value.trim();if(value)state.secrets[p.id]=value});return {...state,settings:{themeMode:$("themeMode").value,previewFamily:$("previewFamily").value,refreshMinutes:Number($("refreshMinutes").value),cacheHours:Number($("cacheHours").value),kimiRegion:$("kimiRegion").value,usdToCnyRate:Number($("usdToCnyRate").value),lowMoneyThreshold:Number($("lowMoneyThreshold").value),lowQuotaThreshold:Number($("lowQuotaThreshold").value),lowCreditsThreshold:Number($("lowCreditsThreshold").value),serpBaseCredits:Number($("manual-serpbase").value),codexAccountId:$("codexAccountId").value.trim(),providerOrder:order,hiddenProviders:[...hidden]}}};
+</script></body></html>`;
+}
+
+function applyWebSettings(settings, payload) {
+  if (payload.resetUI) {
+    settings.themeMode = CONFIG.themeMode;
+    settings.refreshMinutes = CONFIG.refreshMinutes;
+    settings.cacheHours = CONFIG.cacheHours;
+    settings.kimiRegion = CONFIG.kimiRegion;
+    settings.hiddenProviders = [...CONFIG.hiddenProviders];
+    settings.providerOrder = [...CONFIG.providerOrder];
+    settings.usdToCnyRate = CONFIG.usdToCnyRate;
+    settings.lowMoneyThreshold = CONFIG.lowMoneyThreshold;
+    settings.lowQuotaThreshold = CONFIG.lowQuotaThreshold;
+    settings.lowCreditsThreshold = CONFIG.lowCreditsThreshold;
+    settings.previewFamily = CONFIG.previewFamily;
+  } else {
+    const next = payload.settings || {};
+    settings.themeMode = ["dark", "system"].includes(next.themeMode)
+      ? next.themeMode
+      : settings.themeMode;
+    settings.previewFamily = ["small", "medium", "large"].includes(
+      next.previewFamily
+    )
+      ? next.previewFamily
+      : settings.previewFamily;
+    settings.refreshMinutes = [15, 30, 60].includes(next.refreshMinutes)
+      ? next.refreshMinutes
+      : settings.refreshMinutes;
+    settings.cacheHours = [6, 12, 24, 48].includes(next.cacheHours)
+      ? next.cacheHours
+      : settings.cacheHours;
+    settings.kimiRegion = ["cn", "international"].includes(next.kimiRegion)
+      ? next.kimiRegion
+      : settings.kimiRegion;
+    settings.usdToCnyRate = Math.max(0, Number(next.usdToCnyRate) || 0);
+    settings.lowMoneyThreshold = Math.max(
+      0,
+      Number(next.lowMoneyThreshold) || 0
+    );
+    settings.lowQuotaThreshold = Math.min(
+      100,
+      Math.max(0, Number(next.lowQuotaThreshold) || 0)
+    );
+    settings.lowCreditsThreshold = Math.max(
+      0,
+      Number(next.lowCreditsThreshold) || 0
+    );
+    settings.serpBaseCredits = Math.max(
+      0,
+      Number(next.serpBaseCredits) || 0
+    );
+    settings.codexAccountId = String(next.codexAccountId || "").trim();
+    const ids = PROVIDERS.map((provider) => provider.id);
+    const order = Array.isArray(next.providerOrder)
+      ? [...new Set(next.providerOrder.filter((id) => ids.includes(id)))]
+      : [];
+    settings.providerOrder = [...order, ...ids.filter((id) => !order.includes(id))];
+    const hiddenProviders = Array.isArray(next.hiddenProviders)
+      ? next.hiddenProviders.filter((id) => ids.includes(id))
+      : settings.hiddenProviders;
+    settings.hiddenProviders =
+      hiddenProviders.length < ids.length ? hiddenProviders : ids.slice(1);
+  }
+  for (const [id, value] of Object.entries(payload.secrets || {})) {
+    if (PROVIDERS.some((provider) => provider.id === id && !provider.manual)) {
+      setSecret(id, value);
+    }
+  }
+  for (const [id, shouldClear] of Object.entries(payload.clearSecrets || {})) {
+    if (shouldClear) setSecret(id, "");
+  }
+  if (payload.refreshLogos) clearLogoCache();
+  saveSettings(settings);
+}
+
+async function configureWeb(settings) {
+  const webView = new WebView();
+  await webView.loadHTML(settingsPageHTML(settings));
+  await webView.present(false);
+  const raw = await webView.evaluateJavaScript(
+    "JSON.stringify(window.__exportSettings())"
+  );
+  const payload = JSON.parse(raw);
+  applyWebSettings(settings, payload);
+  return Boolean(payload.legacyMenu);
+}
+
 async function refreshProviderLogos() {
   const confirmation = new Alert();
   confirmation.title = "刷新品牌图标";
@@ -965,7 +1133,7 @@ async function refreshProviderLogos() {
   await result.presentAlert();
 }
 
-async function configure(settings) {
+async function configureLegacy(settings) {
   while (true) {
     const sheet = new Alert();
     sheet.title = APP.name;
@@ -1097,7 +1265,14 @@ async function configure(settings) {
 
 async function main() {
   const settings = loadSettings();
-  if (!config.runsInWidget) await configure(settings);
+  if (!config.runsInWidget) {
+    try {
+      const openLegacy = await configureWeb(settings);
+      if (openLegacy) await configureLegacy(settings);
+    } catch (_) {
+      await configureLegacy(settings);
+    }
+  }
   const items = await loadBalances(settings);
   const logos = await loadProviderLogos(items);
   const widget = createWidget(

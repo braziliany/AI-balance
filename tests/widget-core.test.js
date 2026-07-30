@@ -23,6 +23,7 @@ const source = fs
       parseStepFunBalance,
       remainingPercent,
       resolveProviderFailure,
+      settingsPageHTML,
     };`
   );
 const context = {
@@ -30,6 +31,10 @@ const context = {
     resolvePalette: () => ({}),
     applyCardBackground: () => {},
   }),
+  Keychain: {
+    contains: () => true,
+    get: () => "sk-test-secret",
+  },
 };
 vm.runInNewContext(source, context, { filename: widgetPath });
 
@@ -95,6 +100,17 @@ assert.equal(
 );
 assert.equal(api.changeText(-2.5, "¥"), "↓¥2.50");
 assert.equal(api.changeText(7, "%"), "↑7%");
+
+const settingsHTML = api.settingsPageHTML({
+  ...api.CONFIG,
+  codexAccountId: "account-test",
+});
+assert.match(settingsHTML, /设置中心/);
+assert.match(settingsHTML, /账户与额度/);
+assert.match(settingsHTML, /显示服务与顺序/);
+assert.match(settingsHTML, /刷新品牌图标/);
+assert.match(settingsHTML, /经典设置菜单/);
+assert.doesNotMatch(settingsHTML, /sk-test-secret/);
 
 const provider = { id: "deepseek", name: "DeepSeek", color: "yellow" };
 const freshCache = {

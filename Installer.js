@@ -10,7 +10,7 @@
  */
 
 const CONFIG = {
-  version: "1.9.1",
+  version: "2.0.0",
   manifestUrl:
     "https://raw.githubusercontent.com/braziliany/AI-balance/main/manifest.json",
   changelogUrl:
