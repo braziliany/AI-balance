@@ -34,30 +34,30 @@ const manifest = JSON.parse(
 );
 assert.equal(
   context.__installerTestApi.normalizeManifest(manifest).version,
-  "1.8.1"
+  "1.9.0"
 );
 assert.throws(
   () => context.__installerTestApi.normalizeManifest({
-    version: "1.8.1",
+    version: "1.9.0",
     resources: [{ scriptName: "bad", sourceUrl: "http://example.com", marker: "x" }],
   }),
   /非 HTTPS/
 );
 assert.equal(
   context.__installerTestApi.extractVersion(
-    'const APP = { version: "1.8.1" };'
+    'const APP = { version: "1.9.0" };'
   ),
-  "1.8.1"
+  "1.9.0"
 );
-assert.equal(context.__installerTestApi.compareVersions("1.8.0", "1.8.1"), -1);
-assert.equal(context.__installerTestApi.compareVersions("1.8.1", "1.8.1"), 0);
-assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.8.1"), 1);
+assert.equal(context.__installerTestApi.compareVersions("1.8.1", "1.9.0"), -1);
+assert.equal(context.__installerTestApi.compareVersions("1.9.0", "1.9.0"), 0);
+assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.9.0"), 1);
 assert.equal(
   context.__installerTestApi.extractReleaseNotes(
-    "# 更新日志\n\n## 1.8.1 · 2026-07-30\n\n- Codex 窗口修正\n- 大号布局\n\n## 1.8.0 · 2026-07-30",
-    "1.8.1"
+    "# 更新日志\n\n## 1.9.0 · 2026-07-30\n\n- 品牌图标\n- 本地缓存\n\n## 1.8.1 · 2026-07-30",
+    "1.9.0"
   ),
-  "- Codex 窗口修正\n- 大号布局"
+  "- 品牌图标\n- 本地缓存"
 );
 
 console.log("installer: ok");

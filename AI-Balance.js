@@ -12,11 +12,12 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.8.1",
+  version: "1.9.0",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
   historyFile: "ai-balance-history.json",
+  logoCacheDirectory: "ai-balance-logos",
 };
 
 let DesignSystem;
@@ -51,6 +52,8 @@ const PROVIDERS = [
     name: "DeepSeek",
     shortName: "DS",
     color: "yellow",
+    logoUrl:
+      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/deepseek.png",
     keyLabel: "DeepSeek API Key",
     dashboardUrl: "https://platform.deepseek.com/usage",
     fetch: fetchDeepSeek,
@@ -60,6 +63,8 @@ const PROVIDERS = [
     name: "StepFun",
     shortName: "SF",
     color: "orange",
+    logoUrl:
+      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/stepfun.png",
     keyLabel: "StepFun API Key",
     dashboardUrl: "https://platform.stepfun.com/",
     fetch: fetchStepFun,
@@ -69,6 +74,8 @@ const PROVIDERS = [
     name: "Codex",
     shortName: "CX",
     color: "red",
+    logoUrl:
+      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/codex.png",
     keyLabel: "Codex Access Token",
     dashboardUrl: "https://chatgpt.com/codex/settings/usage",
     fetch: fetchCodex,
@@ -78,6 +85,8 @@ const PROVIDERS = [
     name: "SerpBase MCP",
     shortName: "SB",
     color: "yellow",
+    logoUrl:
+      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/serpbase.jpg",
     manual: true,
     dashboardUrl: "https://serpbase.dev/dashboard",
     fetch: fetchSerpBase,
@@ -87,6 +96,8 @@ const PROVIDERS = [
     name: "Kimi",
     shortName: "KM",
     color: "orange",
+    logoUrl:
+      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/kimi.png",
     keyLabel: "Kimi API Key",
     dashboardUrl: "https://platform.moonshot.cn/console/account",
     fetch: fetchKimi,
@@ -218,6 +229,36 @@ async function requestJSON(url, key, headers = {}) {
     throw new Error(String(detail));
   }
   return json;
+}
+
+function logoCachePath(providerId) {
+  const fm = FileManager.local();
+  const directory = fm.joinPath(
+    fm.documentsDirectory(),
+    APP.logoCacheDirectory
+  );
+  if (!fm.fileExists(directory)) fm.createDirectory(directory, true);
+  return fm.joinPath(directory, `${providerId}.png`);
+}
+
+async function loadProviderLogos(providers) {
+  const fm = FileManager.local();
+  const entries = await Promise.all(
+    providers.map(async (provider) => {
+      const path = logoCachePath(provider.id);
+      try {
+        if (fm.fileExists(path)) return [provider.id, fm.readImage(path)];
+        const request = new Request(provider.logoUrl);
+        request.timeoutInterval = 10;
+        const image = await request.loadImage();
+        fm.writeImage(path, image);
+        return [provider.id, image];
+      } catch (_) {
+        return [provider.id, null];
+      }
+    })
+  );
+  return Object.fromEntries(entries);
 }
 
 function formatAmount(value) {
@@ -567,22 +608,39 @@ function addHeader(widget, palette, settings) {
   addText(header, "●", 9, palette.orange);
 }
 
-function addProviderRow(parent, item, palette, compact = false) {
-  const row = parent.addStack();
-  row.url = item.dashboardUrl;
-  row.centerAlignContent();
-  const badge = row.addStack();
+function addProviderBadge(parent, item, palette, logos, compact = false) {
+  const badge = parent.addStack();
   badge.size = new Size(compact ? 26 : 30, compact ? 20 : 22);
   badge.cornerRadius = 6;
   badge.backgroundColor = new Color(palette[item.color], 0.18);
-  const initials = addText(
-    badge,
-    item.shortName,
-    compact ? 9 : 10,
-    palette[item.color],
-    "bold"
-  );
-  initials.centerAlignText();
+  badge.centerAlignContent();
+  badge.addSpacer();
+  const logo = logos[item.id];
+  if (logo) {
+    const image = badge.addImage(logo);
+    const edge = compact ? 15 : 17;
+    image.imageSize = new Size(edge, edge);
+    image.cornerRadius = compact ? 3 : 4;
+    image.applyFittingContentMode();
+  } else {
+    const initials = addText(
+      badge,
+      item.shortName,
+      compact ? 9 : 10,
+      palette[item.color],
+      "bold"
+    );
+    initials.centerAlignText();
+  }
+  badge.addSpacer();
+  return badge;
+}
+
+function addProviderRow(parent, item, palette, logos, compact = false) {
+  const row = parent.addStack();
+  row.url = item.dashboardUrl;
+  row.centerAlignContent();
+  addProviderBadge(row, item, palette, logos, compact);
   row.addSpacer(compact ? 7 : 9);
   const info = row.addStack();
   info.layoutVertically();
@@ -609,7 +667,7 @@ function addProviderRow(parent, item, palette, compact = false) {
   addText(row, item.display, compact ? 14 : 17, color, "bold");
 }
 
-function addBalanceCard(parent, item, palette) {
+function addBalanceCard(parent, item, palette, logos) {
   const card = parent.addStack();
   card.url = item.dashboardUrl;
   card.layoutVertically();
@@ -619,7 +677,7 @@ function addBalanceCard(parent, item, palette) {
 
   const top = card.addStack();
   top.centerAlignContent();
-  addText(top, item.shortName, 10, palette[item.color], "bold");
+  addProviderBadge(top, item, palette, logos, true);
   top.addSpacer(7);
   addText(top, item.name, 13, palette.secondary, "bold");
   card.addSpacer(7);
@@ -664,7 +722,7 @@ function addBalanceCard(parent, item, palette) {
   return card;
 }
 
-function createWidget(items, settings, familyOverride = null) {
+function createWidget(items, settings, logos, familyOverride = null) {
   const widget = new ListWidget();
   const palette = DesignSystem.resolvePalette(settings.themeMode);
   DesignSystem.applyCardBackground(widget, palette);
@@ -676,7 +734,7 @@ function createWidget(items, settings, familyOverride = null) {
   if (family === "small") {
     const configured = items.filter((item) => item.status !== "unset");
     for (const item of configured.slice(0, 3)) {
-      addProviderRow(widget, item, palette, true);
+      addProviderRow(widget, item, palette, logos, true);
       widget.addSpacer(7);
     }
     if (!configured.length) {
@@ -684,16 +742,16 @@ function createWidget(items, settings, familyOverride = null) {
     }
   } else if (family === "large") {
     const highlights = widget.addStack();
-    if (items[0]) addBalanceCard(highlights, items[0], palette);
+    if (items[0]) addBalanceCard(highlights, items[0], palette, logos);
     if (items[1]) {
       highlights.addSpacer(10);
-      addBalanceCard(highlights, items[1], palette);
+      addBalanceCard(highlights, items[1], palette, logos);
     }
     if (items.length) widget.addSpacer(13);
 
     const details = items.slice(2);
     details.forEach((item, index) => {
-      addProviderRow(widget, item, palette, false);
+      addProviderRow(widget, item, palette, logos, false);
       if (index < details.length - 1) widget.addSpacer();
     });
   } else {
@@ -705,7 +763,7 @@ function createWidget(items, settings, familyOverride = null) {
     right.layoutVertically();
     items.forEach((item, index) => {
       const column = index < 3 ? left : right;
-      addProviderRow(column, item, palette, true);
+      addProviderRow(column, item, palette, logos, true);
       column.addSpacer(9);
     });
   }
@@ -998,9 +1056,11 @@ async function main() {
   const settings = loadSettings();
   if (!config.runsInWidget) await configure(settings);
   const items = await loadBalances(settings);
+  const logos = await loadProviderLogos(items);
   const widget = createWidget(
     items,
     settings,
+    logos,
     config.runsInWidget ? null : settings.previewFamily
   );
   if (config.runsInWidget) {
