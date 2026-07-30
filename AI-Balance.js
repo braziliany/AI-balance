@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.9.0",
+  version: "1.9.1",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -259,6 +259,15 @@ function logoCachePath(providerId) {
   );
   if (!fm.fileExists(directory)) fm.createDirectory(directory, true);
   return fm.joinPath(directory, `${providerId}.png`);
+}
+
+function clearLogoCache() {
+  const fm = FileManager.local();
+  const directory = fm.joinPath(
+    fm.documentsDirectory(),
+    APP.logoCacheDirectory
+  );
+  if (fm.fileExists(directory)) fm.remove(directory);
 }
 
 async function loadProviderLogos(providers) {
@@ -940,6 +949,22 @@ async function presentDiagnostics(settings) {
   }
 }
 
+async function refreshProviderLogos() {
+  const confirmation = new Alert();
+  confirmation.title = "刷新品牌图标";
+  confirmation.message =
+    "将删除本地图标缓存。退出设置后会自动重新下载，不会影响密钥、余额或其他设置。";
+  confirmation.addAction("刷新");
+  confirmation.addCancelAction("取消");
+  if ((await confirmation.presentAlert()) !== 0) return;
+  clearLogoCache();
+  const result = new Alert();
+  result.title = "图标缓存已清除";
+  result.message = "完成设置后将自动重新下载品牌图标。";
+  result.addAction("好");
+  await result.presentAlert();
+}
+
 async function configure(settings) {
   while (true) {
     const sheet = new Alert();
@@ -971,6 +996,7 @@ async function configure(settings) {
       `警示阈值：${settings.lowMoneyThreshold} / ${settings.lowQuotaThreshold}% / ${settings.lowCreditsThreshold}`
     );
     sheet.addAction(`预览尺寸：${settings.previewFamily}`);
+    sheet.addAction("刷新品牌图标");
     sheet.addAction("诊断信息");
     sheet.addDestructiveAction("恢复默认 UI");
     sheet.addCancelAction("完成");
@@ -1049,6 +1075,8 @@ async function configure(settings) {
         [["small", "小号"], ["medium", "中号"], ["large", "大号"]]
       );
     } else if (choice === keyProviders.length + 11) {
+      await refreshProviderLogos();
+    } else if (choice === keyProviders.length + 12) {
       await presentDiagnostics(settings);
     } else {
       settings.themeMode = "dark";
