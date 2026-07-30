@@ -12,6 +12,7 @@ const source = fs
       CONFIG,
       changeText,
       formatAmount,
+      formatAge,
       applyHistory,
       historicalValue,
       isLowBalance,
@@ -44,6 +45,7 @@ const codex = api.parseCodexQuota(fixture("codex-usage"));
 assert.equal(codex.display, "77%");
 assert.match(codex.detail, /59%/);
 assert.equal(api.formatAmount(12345.67), "12,346");
+assert.equal(api.formatAge(0), "无成功记录");
 assert.equal(
   api.parseKimiBalance(fixture("kimi-balance"), "USD", 7.2).convertedDisplay,
   "≈¥58.10"

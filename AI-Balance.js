@@ -12,8 +12,8 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.7.0",
-  settingsVersion: 7,
+  version: "1.8.0",
+  settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
   historyFile: "ai-balance-history.json",
@@ -42,6 +42,7 @@ const CONFIG = {
   lowQuotaThreshold: 20,
   lowCreditsThreshold: 100,
   usdToCnyRate: 0,
+  previewFamily: "medium",
 };
 
 const PROVIDERS = [
@@ -140,6 +141,11 @@ function loadSettings() {
       ...stored,
       providerOrder,
       hiddenProviders,
+      previewFamily: ["small", "medium", "large"].includes(
+        stored.previewFamily
+      )
+        ? stored.previewFamily
+        : CONFIG.previewFamily,
       settingsVersion: APP.settingsVersion,
     };
   } catch (_) {
@@ -621,7 +627,7 @@ function addBalanceCard(parent, item, palette) {
   return card;
 }
 
-function createWidget(items, settings) {
+function createWidget(items, settings, familyOverride = null) {
   const widget = new ListWidget();
   const palette = DesignSystem.resolvePalette(settings.themeMode);
   DesignSystem.applyCardBackground(widget, palette);
@@ -629,7 +635,7 @@ function createWidget(items, settings) {
   addHeader(widget, palette, settings);
   widget.addSpacer(12);
 
-  const family = config.widgetFamily || "medium";
+  const family = familyOverride || config.widgetFamily || "medium";
   if (family === "small") {
     const configured = items.filter((item) => item.status !== "unset");
     for (const item of configured.slice(0, 3)) {
@@ -765,6 +771,64 @@ async function chooseOption(title, current, options) {
   return choice === -1 ? current : options[choice][0];
 }
 
+async function editWarningThresholds(settings) {
+  const alert = new Alert();
+  alert.title = "低余额警示阈值";
+  alert.message = "达到或低于阈值时使用红色显示";
+  alert.addTextField("金额", String(settings.lowMoneyThreshold));
+  alert.addTextField("Codex %", String(settings.lowQuotaThreshold));
+  alert.addTextField("SerpBase credits", String(settings.lowCreditsThreshold));
+  alert.addAction("保存");
+  alert.addCancelAction("取消");
+  if ((await alert.presentAlert()) === -1) return;
+
+  const values = [0, 1, 2].map((index) =>
+    Number(alert.textFieldValue(index))
+  );
+  if (values.every((value) => Number.isFinite(value) && value >= 0)) {
+    settings.lowMoneyThreshold = values[0];
+    settings.lowQuotaThreshold = values[1];
+    settings.lowCreditsThreshold = values[2];
+  }
+}
+
+function formatAge(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return "无成功记录";
+  const minutes = Math.max(0, Math.round((Date.now() - value) / 60000));
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`;
+}
+
+async function presentDiagnostics(settings) {
+  const cache = readCache();
+  const visible = orderedProviders(settings);
+  const lines = [
+    `${APP.name} v${APP.version}`,
+    `主题：${settings.themeMode}`,
+    `预览：${settings.previewFamily}`,
+    `刷新/缓存：${settings.refreshMinutes} 分钟 / ${settings.cacheHours} 小时`,
+    `显示服务：${visible.map((item) => item.name).join(", ")}`,
+    "",
+    ...visible.map((provider) => {
+      const item = cache[provider.id];
+      return `${provider.name}：${item ? formatAge(item.updatedAt) : "无缓存"}`;
+    }),
+    "",
+    "诊断报告不包含 API Key、Access Token 或 Account ID。",
+  ];
+  const report = lines.join("\n");
+  const alert = new Alert();
+  alert.title = "诊断信息";
+  alert.message = report;
+  alert.addAction("复制报告");
+  alert.addCancelAction("关闭");
+  if ((await alert.presentAlert()) === 0) {
+    Pasteboard.copyString(report);
+  }
+}
+
 async function configure(settings) {
   while (true) {
     const sheet = new Alert();
@@ -792,6 +856,11 @@ async function configure(settings) {
     sheet.addAction(
       `USD→CNY：${settings.usdToCnyRate > 0 ? settings.usdToCnyRate : "关闭"}`
     );
+    sheet.addAction(
+      `警示阈值：${settings.lowMoneyThreshold} / ${settings.lowQuotaThreshold}% / ${settings.lowCreditsThreshold}`
+    );
+    sheet.addAction(`预览尺寸：${settings.previewFamily}`);
+    sheet.addAction("诊断信息");
     sheet.addDestructiveAction("恢复默认 UI");
     sheet.addCancelAction("完成");
     const choice = await sheet.presentSheet();
@@ -860,6 +929,16 @@ async function configure(settings) {
       if (value !== null && Number.isFinite(Number(value))) {
         settings.usdToCnyRate = Math.max(0, Number(value));
       }
+    } else if (choice === keyProviders.length + 9) {
+      await editWarningThresholds(settings);
+    } else if (choice === keyProviders.length + 10) {
+      settings.previewFamily = await chooseOption(
+        "预览尺寸",
+        settings.previewFamily,
+        [["small", "小号"], ["medium", "中号"], ["large", "大号"]]
+      );
+    } else if (choice === keyProviders.length + 11) {
+      await presentDiagnostics(settings);
     } else {
       settings.themeMode = "dark";
       settings.refreshMinutes = CONFIG.refreshMinutes;
@@ -868,6 +947,10 @@ async function configure(settings) {
       settings.hiddenProviders = [...CONFIG.hiddenProviders];
       settings.providerOrder = [...CONFIG.providerOrder];
       settings.usdToCnyRate = CONFIG.usdToCnyRate;
+      settings.lowMoneyThreshold = CONFIG.lowMoneyThreshold;
+      settings.lowQuotaThreshold = CONFIG.lowQuotaThreshold;
+      settings.lowCreditsThreshold = CONFIG.lowCreditsThreshold;
+      settings.previewFamily = CONFIG.previewFamily;
     }
     saveSettings(settings);
   }
@@ -877,11 +960,17 @@ async function main() {
   const settings = loadSettings();
   if (!config.runsInWidget) await configure(settings);
   const items = await loadBalances(settings);
-  const widget = createWidget(items, settings);
+  const widget = createWidget(
+    items,
+    settings,
+    config.runsInWidget ? null : settings.previewFamily
+  );
   if (config.runsInWidget) {
     Script.setWidget(widget);
   } else {
-    await widget.presentMedium();
+    if (settings.previewFamily === "small") await widget.presentSmall();
+    else if (settings.previewFamily === "large") await widget.presentLarge();
+    else await widget.presentMedium();
   }
   Script.complete();
 }

@@ -34,30 +34,30 @@ const manifest = JSON.parse(
 );
 assert.equal(
   context.__installerTestApi.normalizeManifest(manifest).version,
-  "1.7.0"
+  "1.8.0"
 );
 assert.throws(
   () => context.__installerTestApi.normalizeManifest({
-    version: "1.7.0",
+    version: "1.8.0",
     resources: [{ scriptName: "bad", sourceUrl: "http://example.com", marker: "x" }],
   }),
   /非 HTTPS/
 );
 assert.equal(
   context.__installerTestApi.extractVersion(
-    'const APP = { version: "1.7.0" };'
+    'const APP = { version: "1.8.0" };'
   ),
-  "1.7.0"
+  "1.8.0"
 );
-assert.equal(context.__installerTestApi.compareVersions("1.6.0", "1.7.0"), -1);
-assert.equal(context.__installerTestApi.compareVersions("1.7.0", "1.7.0"), 0);
-assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.7.0"), 1);
+assert.equal(context.__installerTestApi.compareVersions("1.7.0", "1.8.0"), -1);
+assert.equal(context.__installerTestApi.compareVersions("1.8.0", "1.8.0"), 0);
+assert.equal(context.__installerTestApi.compareVersions("2.0.0", "1.8.0"), 1);
 assert.equal(
   context.__installerTestApi.extractReleaseNotes(
-    "# 更新日志\n\n## 1.7.0 · 2026-07-30\n\n- 本地货币\n- 远程 manifest\n\n## 1.6.0 · 2026-07-29",
-    "1.7.0"
+    "# 更新日志\n\n## 1.8.0 · 2026-07-30\n\n- 尺寸预览\n- 安全诊断\n\n## 1.7.0 · 2026-07-30",
+    "1.8.0"
   ),
-  "- 本地货币\n- 远程 manifest"
+  "- 尺寸预览\n- 安全诊断"
 );
 
 console.log("installer: ok");
