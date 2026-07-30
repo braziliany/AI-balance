@@ -192,6 +192,26 @@ function writeCache(data) {
   FileManager.local().writeString(cachePath(), JSON.stringify(data));
 }
 
+function resolveProviderFailure(provider, cached, now, cacheHours, error) {
+  const isFresh =
+    cached &&
+    now - Number(cached.updatedAt || 0) < Number(cacheHours) * 3600000;
+  if (isFresh) {
+    return {
+      ...cached,
+      ...provider,
+      status: "cached",
+      detail: "缓存数据",
+    };
+  }
+  return {
+    ...provider,
+    status: "error",
+    display: "异常",
+    detail: String(error?.message || error).slice(0, 24),
+  };
+}
+
 function historyPath() {
   return FileManager.local().joinPath(
     FileManager.local().documentsDirectory(),
@@ -562,20 +582,15 @@ async function loadBalances(settings) {
         cache[provider.id] = item;
         return item;
       } catch (error) {
-        const old = cache[provider.id];
-        const freshEnough =
-          old && now - Number(old.updatedAt || 0) < settings.cacheHours * 3600000;
-        if (freshEnough) {
-          const item = { ...old, ...provider, status: "cached", detail: "缓存数据" };
-          item.isLow = isLowBalance(item, settings);
-          return item;
-        }
-        return {
-          ...provider,
-          status: "error",
-          display: "异常",
-          detail: String(error.message || error).slice(0, 24),
-        };
+        const item = resolveProviderFailure(
+          provider,
+          cache[provider.id],
+          now,
+          settings.cacheHours,
+          error
+        );
+        item.isLow = isLowBalance(item, settings);
+        return item;
       }
     })
   );

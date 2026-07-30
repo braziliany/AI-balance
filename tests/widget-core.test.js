@@ -22,6 +22,7 @@ const source = fs
       parseKimiBalance,
       parseStepFunBalance,
       remainingPercent,
+      resolveProviderFailure,
     };`
   );
 const context = {
@@ -94,6 +95,46 @@ assert.equal(
 );
 assert.equal(api.changeText(-2.5, "¥"), "↓¥2.50");
 assert.equal(api.changeText(7, "%"), "↑7%");
+
+const provider = { id: "deepseek", name: "DeepSeek", color: "yellow" };
+const freshCache = {
+  id: "deepseek",
+  value: 22.82,
+  display: "¥22.82",
+  detail: "充值 ¥22.82",
+  updatedAt: 10_000,
+};
+const cachedFallback = api.resolveProviderFailure(
+  provider,
+  freshCache,
+  11_000,
+  24,
+  new Error("HTTP 429")
+);
+assert.equal(cachedFallback.status, "cached");
+assert.equal(cachedFallback.display, "¥22.82");
+assert.equal(cachedFallback.detail, "缓存数据");
+
+const expiredFallback = api.resolveProviderFailure(
+  provider,
+  freshCache,
+  10_000 + 25 * 3_600_000,
+  24,
+  new Error("密钥失效")
+);
+assert.equal(expiredFallback.status, "error");
+assert.equal(expiredFallback.display, "异常");
+assert.equal(expiredFallback.detail, "密钥失效");
+
+const emptyFallback = api.resolveProviderFailure(
+  provider,
+  null,
+  11_000,
+  24,
+  new Error("网络不可用")
+);
+assert.equal(emptyFallback.status, "error");
+assert.equal(emptyFallback.detail, "网络不可用");
 
 const history = {
   deepseek: [
