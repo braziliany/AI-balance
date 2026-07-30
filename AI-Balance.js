@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "2.0.0",
+  version: "2.0.1",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -984,13 +984,14 @@ input,select{max-width:48%;border:0;background:transparent;color:var(--sub);font
 .switch{position:relative;width:50px;height:30px;flex:0 0 auto}.switch input{display:none}.slider{position:absolute;inset:0;background:#d1d1d6;border-radius:16px;transition:.2s}.slider:before{content:"";position:absolute;width:26px;height:26px;left:2px;top:2px;background:#fff;border-radius:50%;box-shadow:0 1px 3px #0004;transition:.2s}.switch input:checked+.slider{background:#34c759}.switch input:checked+.slider:before{transform:translateX(20px)}
 .order-row{display:flex;align-items:center;gap:8px}.order-buttons button{border:0;border-radius:7px;background:var(--bg);color:var(--blue);font-size:17px;width:32px;height:30px}
 button.action{border:0;background:transparent;color:var(--blue);font:16px -apple-system;padding:8px 0}.danger{color:var(--red)!important}
-.secret-input{display:none}.secret-input.open{display:block}.secret-actions{display:flex;gap:10px;align-items:center}.status{color:var(--sub);font-size:14px}
+.secret-editor{display:none;padding:10px 14px 12px 58px;border-bottom:1px solid var(--line)}.secret-editor.open{display:flex;gap:12px;align-items:center}.secret-editor input{max-width:none;flex:1;text-align:left}.secret-editor button{flex:0 0 auto}.chevron{color:var(--sub);font-size:22px;line-height:1}.key-row{cursor:pointer}
 .notice{color:var(--sub);font-size:12px;line-height:1.5;margin:8px 12px}.saved{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1c1c1ee8;color:#fff;padding:10px 18px;border-radius:22px;font-size:14px;opacity:0;pointer-events:none;transition:.2s}.saved.show{opacity:1}
 </style>
 </head>
 <body><main>
 <h1>AI Balance</h1><p class="version">设置中心 · v<span id="version"></span> · 关闭页面时自动保存</p>
-<section class="section"><p class="section-title">账户与额度</p><div class="card" id="accounts"></div><p class="notice">已有密钥不会载入网页；留空代表保持不变。新输入关闭页面后直接写入 iOS Keychain。</p></section>
+<section class="section"><p class="section-title">API 密钥</p><div class="card" id="accounts"></div><p class="notice">点击平台可修改密钥。已有密钥不会载入网页；留空代表保持不变。</p></section>
+<section class="section"><p class="section-title">账户详情</p><div class="card" id="accountDetails"></div></section>
 <section class="section"><p class="section-title">显示服务与顺序</p><div class="card" id="providers"></div></section>
 <section class="section"><p class="section-title">外观</p><div class="card">
 <label class="row"><span class="icon purple">UI</span><span class="label"><strong>主题</strong></span><select id="themeMode"><option value="dark">深蓝主题</option><option value="system">跟随系统</option></select></label>
@@ -1020,10 +1021,10 @@ const setValue=(id,value)=>{const node=$(id);if(node)node.value=String(value)};
 ["themeMode","previewFamily","refreshMinutes","cacheHours","kimiRegion","usdToCnyRate","lowMoneyThreshold","lowQuotaThreshold","lowCreditsThreshold"].forEach(id=>setValue(id,initial.settings[id]));
 const toast=text=>{const el=$("toast");el.textContent=text;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),1400)};
 const accounts=$("accounts");
-initial.providers.forEach(p=>{if(p.manual){accounts.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">手动维护剩余额度</span></span><input id="manual-'+p.id+'" type="number" min="0" step="1"></label>');setValue("manual-"+p.id,initial.settings.serpBaseCredits);return}
-const row=document.createElement("div");row.className="row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">'+(p.configured?'已配置':'未配置')+'</span><input class="secret-input" id="secret-'+p.id+'" type="password" placeholder="输入新密钥"></span><span class="secret-actions"><button class="action edit">编辑</button>'+(p.configured?'<button class="action danger clear">清除</button>':'')+'</span>';
-row.querySelector(".edit").onclick=()=>row.querySelector(".secret-input").classList.toggle("open");const clear=row.querySelector(".clear");if(clear)clear.onclick=()=>{state.clearSecrets[p.id]=true;row.querySelector(".hint").textContent="关闭后清除";toast("已标记清除")};accounts.appendChild(row)});
-accounts.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex Account ID</strong><span class="hint">通常从 Token 自动识别</span></span><input id="codexAccountId" type="text"></label>');
+initial.providers.filter(p=>!p.manual).forEach(p=>{const wrapper=document.createElement("div");const row=document.createElement("div");row.className="row key-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">'+(p.configured?'已配置':'未配置')+'</span></span><span class="chevron">›</span>';const editor=document.createElement("div");editor.className="secret-editor";editor.innerHTML='<input id="secret-'+p.id+'" type="password" placeholder="输入新密钥">'+(p.configured?'<button class="action danger">清除</button>':'');row.onclick=()=>editor.classList.toggle("open");const clear=editor.querySelector("button");if(clear)clear.onclick=e=>{e.stopPropagation();state.clearSecrets[p.id]=true;row.querySelector(".hint").textContent="关闭后清除";editor.classList.remove("open");toast("已标记清除")};wrapper.appendChild(row);wrapper.appendChild(editor);accounts.appendChild(wrapper)});
+const accountDetails=$("accountDetails");
+accountDetails.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon yellow">SB</span><span class="label"><strong>SerpBase MCP</strong><span class="hint">手动维护剩余额度</span></span><input id="manual-serpbase" type="number" min="0" step="1"></label><label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex ID</strong><span class="hint">通常从 Token 自动识别</span></span><input id="codexAccountId" type="text" placeholder="自动"></label>');
+setValue("manual-serpbase",initial.settings.serpBaseCredits);
 setValue("codexAccountId",initial.settings.codexAccountId||"");
 const providerBox=$("providers");let order=[...initial.settings.providerOrder];const hidden=new Set(initial.settings.hiddenProviders);
 function drawProviders(){providerBox.innerHTML="";order.forEach((id,index)=>{const p=initial.providers.find(x=>x.id===id);const row=document.createElement("div");row.className="row order-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong></span><label class="switch"><input type="checkbox" '+(!hidden.has(id)?"checked":"")+'><span class="slider"></span></label><span class="order-buttons"><button data-d="-1">↑</button><button data-d="1">↓</button></span>';row.querySelector("input").onchange=e=>e.target.checked?hidden.delete(id):hidden.add(id);row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const next=index+Number(b.dataset.d);if(next<0||next>=order.length)return;[order[index],order[next]]=[order[next],order[index]];drawProviders()});providerBox.appendChild(row)})}drawProviders();

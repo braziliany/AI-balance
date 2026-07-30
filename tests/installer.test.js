@@ -34,30 +34,30 @@ const manifest = JSON.parse(
 );
 assert.equal(
   context.__installerTestApi.normalizeManifest(manifest).version,
-  "2.0.0"
+  "2.0.1"
 );
 assert.throws(
   () => context.__installerTestApi.normalizeManifest({
-    version: "2.0.0",
+    version: "2.0.1",
     resources: [{ scriptName: "bad", sourceUrl: "http://example.com", marker: "x" }],
   }),
   /非 HTTPS/
 );
 assert.equal(
   context.__installerTestApi.extractVersion(
-    'const APP = { version: "2.0.0" };'
+    'const APP = { version: "2.0.1" };'
   ),
-  "2.0.0"
+  "2.0.1"
 );
-assert.equal(context.__installerTestApi.compareVersions("1.9.1", "2.0.0"), -1);
-assert.equal(context.__installerTestApi.compareVersions("2.0.0", "2.0.0"), 0);
-assert.equal(context.__installerTestApi.compareVersions("3.0.0", "2.0.0"), 1);
+assert.equal(context.__installerTestApi.compareVersions("2.0.0", "2.0.1"), -1);
+assert.equal(context.__installerTestApi.compareVersions("2.0.1", "2.0.1"), 0);
+assert.equal(context.__installerTestApi.compareVersions("3.0.0", "2.0.1"), 1);
 assert.equal(
   context.__installerTestApi.extractReleaseNotes(
-    "# 更新日志\n\n## 2.0.0 · 2026-07-30\n\n- 分组设置中心\n- Keychain 安全\n\n## 1.9.1 · 2026-07-30",
-    "2.0.0"
+    "# 更新日志\n\n## 2.0.1 · 2026-07-30\n\n- 精简账户区域\n- 按需展开密钥编辑\n\n## 2.0.0 · 2026-07-30",
+    "2.0.1"
   ),
-  "- 分组设置中心\n- Keychain 安全"
+  "- 精简账户区域\n- 按需展开密钥编辑"
 );
 
 console.log("installer: ok");

@@ -106,7 +106,8 @@ const settingsHTML = api.settingsPageHTML({
   codexAccountId: "account-test",
 });
 assert.match(settingsHTML, /设置中心/);
-assert.match(settingsHTML, /账户与额度/);
+assert.match(settingsHTML, /API 密钥/);
+assert.match(settingsHTML, /账户详情/);
 assert.match(settingsHTML, /显示服务与顺序/);
 assert.match(settingsHTML, /刷新品牌图标/);
 assert.match(settingsHTML, /经典设置菜单/);
