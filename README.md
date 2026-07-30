@@ -4,7 +4,7 @@
 
 - DeepSeek：账户可用余额
 - StepFun：账户可用余额
-- Codex：5 小时窗口与每周额度剩余百分比
+- Codex：自动识别可用的 5 小时窗口与每周额度剩余百分比
 - SerpBase MCP：手动维护剩余 credits（官方暂未公开余额查询接口）
 - Kimi：账户可用余额
 

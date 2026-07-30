@@ -44,6 +44,13 @@ assert.equal(api.parseKimiBalance(fixture("kimi-balance"), "CNY").display, "¥8.
 const codex = api.parseCodexQuota(fixture("codex-usage"));
 assert.equal(codex.display, "77%");
 assert.match(codex.detail, /59%/);
+const weeklyOnlyCodex = api.parseCodexQuota({
+  rate_limit: {
+    primary_window: { used_percent: 71, window_minutes: 10080 },
+  },
+});
+assert.equal(weeklyOnlyCodex.display, "29%");
+assert.equal(weeklyOnlyCodex.detail, "周剩余");
 assert.equal(api.formatAmount(12345.67), "12,346");
 assert.equal(api.formatAge(0), "无成功记录");
 assert.equal(

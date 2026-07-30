@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "1.8.0",
+  version: "1.8.1",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -359,21 +359,47 @@ function parseCodexQuota(json) {
   const limits = json.rate_limit || json.rate_limits || json;
   const primary = limits.primary_window || limits.primary;
   const secondary = limits.secondary_window || limits.secondary;
-  const fiveHourRemaining = remainingPercent(primary);
-  const weeklyRemaining = remainingPercent(secondary);
-  if (fiveHourRemaining === null) {
+  const windows = [primary, secondary].filter(Boolean);
+  const minutes = (window) => Number(window?.window_minutes);
+  let fiveHour = windows.find((window) => {
+    const value = minutes(window);
+    return Number.isFinite(value) && value > 0 && value <= 360;
+  });
+  let weekly = windows.find((window) => {
+    const value = minutes(window);
+    return Number.isFinite(value) && value >= 1000;
+  });
+
+  // 兼容旧响应：没有 window_minutes 时按 primary / secondary 顺序解析。
+  if (!fiveHour && !weekly) {
+    if (primary && secondary) {
+      fiveHour = primary;
+      weekly = secondary;
+    } else {
+      fiveHour = primary;
+    }
+  }
+
+  const fiveHourRemaining = remainingPercent(fiveHour);
+  const weeklyRemaining = remainingPercent(weekly);
+  const mainRemaining =
+    fiveHourRemaining !== null ? fiveHourRemaining : weeklyRemaining;
+  if (mainRemaining === null) {
     throw new Error("Codex 额度响应格式已变化");
   }
-  return {
-    value: fiveHourRemaining,
-    unit: "%",
-    display: `${fiveHourRemaining}%`,
-    detail:
-      weeklyRemaining === null
+  const detail =
+    fiveHourRemaining !== null && weeklyRemaining !== null
+      ? `5小时 · 周剩余 ${weeklyRemaining}%`
+      : fiveHourRemaining !== null
         ? "5小时剩余"
-        : `5小时 · 周剩余 ${weeklyRemaining}%`,
+        : "周剩余";
+  return {
+    value: mainRemaining,
+    unit: "%",
+    display: `${mainRemaining}%`,
+    detail,
     secondaryDetail: "Codex 订阅额度",
-    progress: fiveHourRemaining / 100,
+    progress: mainRemaining / 100,
   };
 }
 
@@ -562,6 +588,17 @@ function addProviderRow(parent, item, palette, compact = false) {
   info.layoutVertically();
   addText(info, item.name, compact ? 12 : 14, palette.white, "bold");
   if (!compact) addText(info, item.detail, 10, palette.secondary);
+  if (!compact && Number.isFinite(item.progress)) {
+    info.addSpacer(4);
+    const track = info.addStack();
+    track.size = new Size(72, 3);
+    track.cornerRadius = 1.5;
+    track.backgroundColor = new Color(palette.divider, 0.1);
+    const fill = track.addStack();
+    fill.size = new Size(Math.max(2, Math.round(item.progress * 72)), 3);
+    fill.cornerRadius = 1.5;
+    fill.backgroundColor = new Color(item.isLow ? palette.red : palette.yellow);
+  }
   row.addSpacer();
   const color = item.isLow
     ? palette.red
@@ -654,10 +691,11 @@ function createWidget(items, settings, familyOverride = null) {
     }
     if (items.length) widget.addSpacer(13);
 
-    for (const item of items.slice(2)) {
+    const details = items.slice(2);
+    details.forEach((item, index) => {
       addProviderRow(widget, item, palette, false);
-      widget.addSpacer(12);
-    }
+      if (index < details.length - 1) widget.addSpacer();
+    });
   } else {
     const columns = widget.addStack();
     const left = columns.addStack();
