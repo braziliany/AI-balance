@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "2.0.1",
+  version: "2.0.2",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -695,6 +695,9 @@ function addBalanceCard(parent, item, palette, logos) {
   const card = parent.addStack();
   card.url = item.dashboardUrl;
   card.layoutVertically();
+  // Large-widget highlight cards share one fixed footprint so their
+  // translucent backgrounds stay aligned even when content lengths differ.
+  card.size = new Size(150, 145);
   card.setPadding(11, 12, 10, 12);
   card.cornerRadius = 12;
   card.backgroundColor = new Color(palette.divider, 0.07);
