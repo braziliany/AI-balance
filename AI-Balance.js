@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "2.0.2",
+  version: "2.0.3",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -430,7 +430,18 @@ function parseCodexQuota(json) {
   const primary = limits.primary_window || limits.primary;
   const secondary = limits.secondary_window || limits.secondary;
   const windows = [primary, secondary].filter(Boolean);
-  const minutes = (window) => Number(window?.window_minutes);
+  const minutes = (window) => {
+    const explicit = Number(
+      window?.window_minutes ??
+        window?.windowMinutes ??
+        window?.duration_minutes
+    );
+    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+    const resetAfter = Number(window?.reset_after_seconds);
+    return Number.isFinite(resetAfter) && resetAfter > 0
+      ? resetAfter / 60
+      : null;
+  };
   let fiveHour = windows.find((window) => {
     const value = minutes(window);
     return Number.isFinite(value) && value > 0 && value <= 360;
@@ -440,14 +451,18 @@ function parseCodexQuota(json) {
     return Number.isFinite(value) && value >= 1000;
   });
 
-  // 兼容旧响应：没有 window_minutes 时按 primary / secondary 顺序解析。
+  const unknown = windows.filter((window) => {
+    const value = minutes(window);
+    return !Number.isFinite(value) || value <= 0;
+  });
+
+  // 兼容旧响应或部分字段缺失：已识别一个窗口后，将另一个未知窗口
+  // 按接口的 primary/secondary 顺序补为另一种额度窗口。
+  if (!fiveHour && weekly && unknown.length) fiveHour = unknown[0];
+  if (!weekly && fiveHour && unknown.length) weekly = unknown[0];
   if (!fiveHour && !weekly) {
-    if (primary && secondary) {
-      fiveHour = primary;
-      weekly = secondary;
-    } else {
-      fiveHour = primary;
-    }
+    fiveHour = primary || windows[0];
+    weekly = secondary && secondary !== fiveHour ? secondary : null;
   }
 
   const fiveHourRemaining = remainingPercent(fiveHour);
@@ -457,18 +472,16 @@ function parseCodexQuota(json) {
   if (mainRemaining === null) {
     throw new Error("Codex 额度响应格式已变化");
   }
-  const detail =
-    fiveHourRemaining !== null && weeklyRemaining !== null
-      ? `5小时 · 周剩余 ${weeklyRemaining}%`
-      : fiveHourRemaining !== null
-        ? "5小时剩余"
-        : "周剩余";
+  const detail = fiveHourRemaining !== null ? "5小时剩余" : "周剩余";
   return {
     value: mainRemaining,
     unit: "%",
     display: `${mainRemaining}%`,
     detail,
-    secondaryDetail: "Codex 订阅额度",
+    secondaryDetail:
+      weeklyRemaining === null
+        ? "Codex 订阅额度"
+        : `周剩余 ${weeklyRemaining}% · Codex 订阅额度`,
     progress: mainRemaining / 100,
   };
 }

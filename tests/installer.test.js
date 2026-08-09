@@ -34,30 +34,30 @@ const manifest = JSON.parse(
 );
 assert.equal(
   context.__installerTestApi.normalizeManifest(manifest).version,
-  "2.0.2"
+  "2.0.3"
 );
 assert.throws(
   () => context.__installerTestApi.normalizeManifest({
-    version: "2.0.2",
+    version: "2.0.3",
     resources: [{ scriptName: "bad", sourceUrl: "http://example.com", marker: "x" }],
   }),
   /非 HTTPS/
 );
 assert.equal(
   context.__installerTestApi.extractVersion(
-    'const APP = { version: "2.0.2" };'
+    'const APP = { version: "2.0.3" };'
   ),
-  "2.0.2"
+  "2.0.3"
 );
-assert.equal(context.__installerTestApi.compareVersions("2.0.1", "2.0.2"), -1);
-assert.equal(context.__installerTestApi.compareVersions("2.0.2", "2.0.2"), 0);
-assert.equal(context.__installerTestApi.compareVersions("3.0.0", "2.0.2"), 1);
+assert.equal(context.__installerTestApi.compareVersions("2.0.2", "2.0.3"), -1);
+assert.equal(context.__installerTestApi.compareVersions("2.0.3", "2.0.3"), 0);
+assert.equal(context.__installerTestApi.compareVersions("3.0.0", "2.0.3"), 1);
 assert.equal(
   context.__installerTestApi.extractReleaseNotes(
-    "# 更新日志\n\n## 2.0.2 · 2026-08-09\n\n- 统一余额卡片\n- 固定卡片尺寸\n\n## 2.0.1 · 2026-07-30",
-    "2.0.2"
+    "# 更新日志\n\n## 2.0.3 · 2026-08-09\n\n- Codex 5 小时窗口\n- 周额度副信息\n\n## 2.0.2 · 2026-08-09",
+    "2.0.3"
   ),
-  "- 统一余额卡片\n- 固定卡片尺寸"
+  "- Codex 5 小时窗口\n- 周额度副信息"
 );
 
 console.log("installer: ok");

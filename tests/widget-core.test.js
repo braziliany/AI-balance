@@ -49,7 +49,8 @@ assert.equal(api.parseStepFunBalance(fixture("stepfun-account")).value, 15);
 assert.equal(api.parseKimiBalance(fixture("kimi-balance"), "CNY").display, "¥8.07");
 const codex = api.parseCodexQuota(fixture("codex-usage"));
 assert.equal(codex.display, "77%");
-assert.match(codex.detail, /59%/);
+assert.equal(codex.detail, "5小时剩余");
+assert.match(codex.secondaryDetail, /周剩余 59%/);
 const weeklyOnlyCodex = api.parseCodexQuota({
   rate_limit: {
     primary_window: { used_percent: 71, window_minutes: 10080 },
@@ -57,6 +58,23 @@ const weeklyOnlyCodex = api.parseCodexQuota({
 });
 assert.equal(weeklyOnlyCodex.display, "29%");
 assert.equal(weeklyOnlyCodex.detail, "周剩余");
+const partialWindowCodex = api.parseCodexQuota({
+  rate_limit: {
+    primary_window: { used_percent: 32 },
+    secondary_window: { used_percent: 48, window_minutes: 10080 },
+  },
+});
+assert.equal(partialWindowCodex.display, "68%");
+assert.equal(partialWindowCodex.detail, "5小时剩余");
+assert.match(partialWindowCodex.secondaryDetail, /周剩余 52%/);
+const resetSecondsCodex = api.parseCodexQuota({
+  rate_limit: {
+    primary_window: { used_percent: 20, reset_after_seconds: 18000 },
+    secondary_window: { used_percent: 40, reset_after_seconds: 604800 },
+  },
+});
+assert.equal(resetSecondsCodex.display, "80%");
+assert.match(resetSecondsCodex.secondaryDetail, /周剩余 60%/);
 assert.equal(api.formatAmount(12345.67), "12,346");
 assert.equal(api.formatAge(0), "无成功记录");
 assert.equal(
