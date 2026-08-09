@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "2.0.3",
+  version: "2.0.4",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -719,7 +719,7 @@ function addBalanceCard(parent, item, palette, logos) {
   top.centerAlignContent();
   addProviderBadge(top, item, palette, logos, true);
   top.addSpacer(7);
-  addText(top, item.name, 13, palette.secondary, "bold");
+  addText(top, item.name, 15, palette.white, "bold");
   card.addSpacer(7);
 
   const valueColor = item.isLow
