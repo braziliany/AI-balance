@@ -75,6 +75,23 @@ const resetSecondsCodex = api.parseCodexQuota({
 });
 assert.equal(resetSecondsCodex.display, "80%");
 assert.match(resetSecondsCodex.secondaryDetail, /周剩余 60%/);
+const exhaustedCodex = api.parseCodexQuota({
+  rate_limit: {
+    primary_window: {
+      used_percent: 100,
+      window_minutes: 300,
+      reset_at: 1893456000,
+    },
+    secondary_window: {
+      used_percent: 100,
+      window_minutes: 10080,
+      reset_at: 1894060800,
+    },
+  },
+});
+assert.equal(exhaustedCodex.display, "0%");
+assert.match(exhaustedCodex.secondaryDetail, /下次重置/);
+assert.doesNotMatch(exhaustedCodex.secondaryDetail, /订阅额度/);
 assert.equal(api.formatAmount(12345.67), "12,346");
 assert.equal(api.formatAge(0), "无成功记录");
 assert.equal(

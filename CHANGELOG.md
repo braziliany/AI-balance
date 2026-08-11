@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2.0.5 · 2026-08-11
+
+- Codex 额度为 0 时，周额度副信息显示下次重置日期和时间。
+- 删除“Codex 订阅额度”冗余文案。
+- 支持 `reset_at`、`resetAt`、`reset_time` 和 `reset_after_seconds` 重置字段。
+
 ## 2.0.4 · 2026-08-09
 
 - 增大大号组件顶部余额卡片的 DeepSeek、Codex 服务名称字体。

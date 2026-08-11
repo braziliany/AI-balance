@@ -12,7 +12,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "2.0.4",
+  version: "2.0.5",
   settingsVersion: 8,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -414,6 +414,31 @@ function remainingPercent(window) {
   return Math.max(0, Math.min(100, Math.round(100 - used)));
 }
 
+function codexResetDate(window) {
+  const raw = window?.reset_at ?? window?.resetAt ?? window?.reset_time;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const numeric = Number(raw);
+    const date = Number.isFinite(numeric)
+      ? new Date(numeric < 1e12 ? numeric * 1000 : numeric)
+      : new Date(raw);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  const seconds = Number(window?.reset_after_seconds);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return new Date(Date.now() + seconds * 1000);
+  }
+  return null;
+}
+
+function formatCodexResetDate(window) {
+  const date = codexResetDate(window);
+  if (!date) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getMonth() + 1}/${date.getDate()} ${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
+}
+
 async function fetchCodex(key, settings) {
   const accountId = codexAccountId(key, settings);
   const headers = accountId ? { "ChatGPT-Account-Id": accountId } : {};
@@ -473,15 +498,19 @@ function parseCodexQuota(json) {
     throw new Error("Codex 额度响应格式已变化");
   }
   const detail = fiveHourRemaining !== null ? "5小时剩余" : "周剩余";
+  const resetWindow = weekly || fiveHour;
+  const resetText = formatCodexResetDate(resetWindow);
   return {
     value: mainRemaining,
     unit: "%",
     display: `${mainRemaining}%`,
     detail,
     secondaryDetail:
-      weeklyRemaining === null
-        ? "Codex 订阅额度"
-        : `周剩余 ${weeklyRemaining}% · Codex 订阅额度`,
+      mainRemaining === 0 && resetText
+        ? `下次重置 ${resetText}`
+        : weeklyRemaining === null
+          ? ""
+          : `周剩余 ${weeklyRemaining}%`,
     progress: mainRemaining / 100,
   };
 }
