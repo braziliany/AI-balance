@@ -58,6 +58,16 @@ assert.match(widgetSource, /importModule\("AI-Balance-Core"\)/);
 assert.match(widgetSource, /importModule\("AI-Balance-Providers"\)/);
 assert.match(coreSource, /module\.exports/);
 assert.match(providersSource, /module\.exports/);
+assert.match(providersSource, /https:\/\/api\.muteki\.site\/v1\/usage/);
+assert.doesNotMatch(
+  providersSource,
+  /api\.stepfun|moonshot|serpbase|id:\s*["'](?:stepfun|kimi|serpbase)["']/i
+);
+assert.doesNotMatch(
+  widgetSource,
+  /balance_infos|used_percent|primary_window|secondary_window|item\.progress/
+);
+assert.match(widgetSource, /settingsVersion:\s*9/);
 
 const logoReferences = Array.from(
   providersSource.matchAll(/assets\/logos\/([a-z0-9.-]+)/g),
@@ -65,7 +75,7 @@ const logoReferences = Array.from(
 );
 assert.deepEqual(
   logoReferences.sort(),
-  ["codex.png", "deepseek.png", "kimi.png", "serpbase.jpg", "stepfun.png"]
+  ["codex.png", "deepseek.png"]
 );
 for (const logo of logoReferences) {
   assert.ok(

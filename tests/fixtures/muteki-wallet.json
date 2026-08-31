@@ -1,0 +1,19 @@
+{
+  "balance": 6.23462188,
+  "daily_usage": [],
+  "isValid": true,
+  "mode": "unrestricted",
+  "planName": "钱包余额",
+  "remaining": 6.23462188,
+  "unit": "USD",
+  "usage": {
+    "today": {
+      "actual_cost": 0.42,
+      "requests": 12,
+      "total_tokens": 3456
+    },
+    "total": {
+      "actual_cost": 3.75
+    }
+  }
+}

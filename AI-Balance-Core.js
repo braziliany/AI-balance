@@ -8,7 +8,6 @@ const PROVIDER_STATUSES = Object.freeze({
   CACHED: "cached",
   ERROR: "error",
   UNCONFIGURED: "unconfigured",
-  MANUAL: "manual",
 });
 
 function finiteNumber(value, fallback = 0) {
@@ -156,7 +155,6 @@ function normalizeProviderResult(provider, value = {}, context = {}) {
     logoUrl: String(provider.logoUrl || ""),
     keyLabel: String(provider.keyLabel || ""),
     dashboardUrl: String(provider.dashboardUrl || ""),
-    manual: Boolean(provider.manual),
     status,
     value: Number.isFinite(numericValue) ? numericValue : 0,
     unit: String(value.unit || ""),
@@ -175,9 +173,6 @@ function normalizeProviderResult(provider, value = {}, context = {}) {
         ? null
         : finiteNumber(resetAtRaw, null),
     quota: emptyQuota(value.quota),
-    progress: Number.isFinite(Number(value.progress))
-      ? Number(value.progress)
-      : null,
     delta: Number.isFinite(Number(value.delta)) ? Number(value.delta) : null,
     change: String(value.change || ""),
     periodDetail: String(value.periodDetail || ""),
@@ -240,14 +235,15 @@ function isLowBalance(item, settings) {
     ![
       PROVIDER_STATUSES.OK,
       PROVIDER_STATUSES.CACHED,
-      PROVIDER_STATUSES.MANUAL,
     ].includes(item.status)
   ) {
     return false;
   }
   if (item.unit === "%") return item.value <= settings.lowQuotaThreshold;
-  if (item.unit === "次") return item.value <= settings.lowCreditsThreshold;
-  return item.value <= settings.lowMoneyThreshold;
+  if (item.currency === "USD" || item.unit === "$") {
+    return item.value <= settings.lowUsdThreshold;
+  }
+  return item.value <= settings.lowCnyThreshold;
 }
 
 function changeText(delta, unit) {
@@ -290,7 +286,7 @@ function applyHistory(results, history, now) {
 
   for (const item of results) {
     if (
-      ![PROVIDER_STATUSES.OK, PROVIDER_STATUSES.MANUAL].includes(item.status)
+      item.status !== PROVIDER_STATUSES.OK
     ) {
       continue;
     }

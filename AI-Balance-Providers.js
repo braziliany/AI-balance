@@ -10,7 +10,6 @@ const {
   classifyCodexWindows,
   codexResetAt,
   decodeJwtPayload,
-  formatResetAt,
   money,
   normalizeProviderResult,
   remainingPercent,
@@ -43,39 +42,7 @@ const PROVIDERS = [
           money(item.topped_up_balance, item.currency, context.settings.usdToCnyRate)
             .display
         }`,
-        secondaryDetail: `赠送 ${
-          money(item.granted_balance, item.currency, context.settings.usdToCnyRate)
-            .display
-        }`,
         meta: { source: "deepseek" },
-      };
-    },
-  },
-  {
-    id: "stepfun",
-    name: "StepFun",
-    shortName: "SF",
-    color: "orange",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/stepfun.png",
-    keyLabel: "StepFun API Key",
-    dashboardUrl: "https://platform.stepfun.com/",
-    async fetch(context) {
-      return context.requestJSON(
-        "https://api.stepfun.com/v1/accounts",
-        context.credential
-      );
-    },
-    parse(json) {
-      const account = json.data || json;
-      const result = money(account.balance, account.currency || "CNY");
-      return {
-        ...result,
-        detail: `充值 ${money(account.total_cash_balance, "CNY").display}`,
-        secondaryDetail: `赠送 ${
-          money(account.total_voucher_balance, "CNY").display
-        }`,
-        meta: { source: "stepfun", accountType: String(account.type || "") },
       };
     },
   },
@@ -112,19 +79,13 @@ const PROVIDERS = [
       const shortResetAt = codexResetAt(shortWindow, context.now);
       const weeklyResetAt = codexResetAt(weeklyWindow, context.now);
       const resetAt = weeklyResetAt || shortResetAt;
-      const resetText = formatResetAt(resetAt);
       return {
         value: mainRemaining,
         unit: "%",
         display: `${mainRemaining}%`,
-        detail: shortRemaining !== null ? "5小时剩余" : "周剩余",
+        detail: shortRemaining !== null ? "5小时额度" : "周额度",
         secondaryDetail:
-          mainRemaining === 0 && resetText
-            ? `下次重置 ${resetText}`
-            : weeklyRemaining === null
-              ? ""
-              : `周剩余 ${weeklyRemaining}%`,
-        progress: mainRemaining / 100,
+          weeklyRemaining === null ? "" : `周额度 ${weeklyRemaining}%`,
         resetAt,
         quota: {
           shortWindowRemainingPercent: shortRemaining,
@@ -137,63 +98,78 @@ const PROVIDERS = [
     },
   },
   {
-    id: "serpbase",
-    name: "SerpBase MCP",
-    shortName: "SB",
-    color: "yellow",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/serpbase.jpg",
-    manual: true,
-    dashboardUrl: "https://serpbase.dev/dashboard",
-    async fetch(context) {
-      return { credits: Number(context.settings.serpBaseCredits || 0) };
-    },
-    parse(value) {
-      const credits = Number(value.credits || 0);
-      return {
-        status: PROVIDER_STATUSES.MANUAL,
-        value: credits,
-        unit: "次",
-        display: `${Math.max(0, credits).toLocaleString()}`,
-        detail: "手动额度",
-        meta: { source: "manual" },
-      };
-    },
-  },
-  {
-    id: "kimi",
-    name: "Kimi",
-    shortName: "KM",
+    id: "muteki",
+    name: "Muteki",
+    shortName: "MT",
     color: "orange",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/kimi.png",
-    keyLabel: "Kimi API Key",
-    dashboardUrl: "https://platform.moonshot.cn/console/account",
+    logoUrl: "",
+    keyLabel: "Muteki API Key",
+    dashboardUrl: "https://api.muteki.site",
     async fetch(context) {
-      const host =
-        context.settings.kimiRegion === "international"
-          ? "https://api.moonshot.ai"
-          : "https://api.moonshot.cn";
       return context.requestJSON(
-        `${host}/v1/users/me/balance`,
+        "https://api.muteki.site/v1/usage",
         context.credential
       );
     },
     parse(json, context) {
-      if (json.status === false) throw new Error(json.message || "查询失败");
-      const data = json.data || {};
-      const currency =
-        context.settings.kimiRegion === "international" ? "USD" : "CNY";
+      if (json?.isValid === false) throw new Error("Muteki API Key 无效");
+      const remaining =
+        json?.remaining === null || json?.remaining === undefined
+          ? null
+          : Number(json.remaining);
+      const balance =
+        json?.balance === null || json?.balance === undefined
+          ? null
+          : Number(json.balance);
+      const hasRemaining = Number.isFinite(remaining);
+      const hasBalance = Number.isFinite(balance);
+      if (!hasRemaining && !hasBalance) throw new Error("余额响应缺少有效数值");
+      if (hasRemaining && hasBalance) {
+        const tolerance = Math.max(0.01, Math.abs(balance) * 0.01);
+        if (Math.abs(remaining - balance) > tolerance) {
+          throw new Error("余额响应异常");
+        }
+      }
+      const wallet = hasRemaining ? remaining : balance;
+      if (wallet < 0) throw new Error("余额响应异常");
+      const currency = String(json?.unit || "USD").toUpperCase();
+      if (currency !== "USD") throw new Error("Muteki 币种响应异常");
+      const todayRaw = json?.usage?.today?.actual_cost;
+      const todayActualCost =
+        todayRaw === null || todayRaw === undefined
+          ? null
+          : Number(todayRaw);
+      const hasTodayCost =
+        Number.isFinite(todayActualCost) && todayActualCost >= 0;
+      const totalRaw = json?.usage?.total?.actual_cost;
+      const totalActualCost =
+        totalRaw === null || totalRaw === undefined ? null : Number(totalRaw);
+      const requestsToday = Number(json?.usage?.today?.requests);
+      const totalTokensToday = Number(json?.usage?.today?.total_tokens);
+      const result = money(
+        wallet,
+        "USD",
+        context.settings.usdToCnyRate
+      );
       return {
-        ...money(data.available_balance, currency, context.settings.usdToCnyRate),
-        detail: `现金 ${
-          money(data.cash_balance, currency, context.settings.usdToCnyRate).display
-        }`,
-        secondaryDetail: `代金券 ${
-          money(data.voucher_balance, currency, context.settings.usdToCnyRate)
-            .display
-        }`,
-        meta: { source: "kimi", region: context.settings.kimiRegion },
+        ...result,
+        detail: String(json?.planName || "钱包余额"),
+        secondaryDetail: hasTodayCost
+          ? `今日 ${money(todayActualCost, "USD").display}`
+          : "",
+        meta: {
+          source: "muteki",
+          planName: String(json?.planName || ""),
+          mode: String(json?.mode || ""),
+          todayActualCost: hasTodayCost ? todayActualCost : null,
+          totalActualCost: Number.isFinite(totalActualCost)
+            ? totalActualCost
+            : null,
+          requestsToday: Number.isFinite(requestsToday) ? requestsToday : null,
+          totalTokensToday: Number.isFinite(totalTokensToday)
+            ? totalTokensToday
+            : null,
+        },
       };
     },
   },
@@ -231,9 +207,7 @@ function parseProviderFixture(providerId, response, context = {}) {
   const now = Number(context.now || Date.now());
   const settings = {
     usdToCnyRate: 0,
-    kimiRegion: "cn",
     codexAccountId: "",
-    serpBaseCredits: 0,
     ...(context.settings || {}),
   };
   const parsed = provider.parse(response, { ...context, now, settings });

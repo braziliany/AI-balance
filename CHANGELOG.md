@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2.2.0 · 待发布
+
+- 正式 Provider 收敛为 DeepSeek、Codex 与 Muteki，移除 StepFun、Kimi 和 SerpBase MCP 运行时与设置入口。
+- 新增 Muteki `/v1/usage` 钱包余额与今日消费，接入美元人民币参考值、cache、8 天 history 和日/周余额变化。
+- Codex 5 小时额度与周额度改为同级双指标，并分别显示各自重置时间。
+- 删除 Codex 进度条，额度为 0% 时仍保持双指标布局。
+- DeepSeek 保持 `total_balance` 总余额语义，但不再显示赠送余额。
+- settingsVersion 升至 9，清理旧 Provider ID、补入 Muteki，并将旧金额阈值迁移为独立人民币/美元阈值。
+- 旧 StepFun/Kimi Keychain 保留但停止读取，无需重新输入 DeepSeek 或 Codex 凭据。
+
 ## 2.1.0 · 待发布
 
 - 引入 Provider Adapter 架构，集中管理五个数据源的请求、解析与兼容逻辑。

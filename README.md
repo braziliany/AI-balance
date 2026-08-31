@@ -1,83 +1,78 @@
 # AI Balance for Scriptable
 
-一个使用 `LPL-Design-System` 的 Scriptable 小组件，汇总：
+一个使用 `LPL-Design-System` 的 Scriptable 小组件，聚合三个长期使用且可自动查询的数据源：
 
-- DeepSeek：账户可用余额
-- StepFun：账户可用余额
-- Codex：自动识别可用的 5 小时窗口与每周额度剩余百分比
-- SerpBase MCP：手动维护剩余 credits（官方暂未公开余额查询接口）
-- Kimi：账户可用余额
+- DeepSeek：人民币账户总余额与充值余额
+- Codex：5 小时额度、周额度及两套独立重置时间
+- Muteki：美元钱包余额与今日消费
 
-各服务使用品牌图标显示。图标首次运行时下载到 Scriptable 本地缓存；网络不可用时会自动回退到字母标志，不影响余额查询。
-
-如果品牌图标没有更新或本地图片损坏，可在主脚本设置中选择“刷新品牌图标”；该操作不会删除密钥、余额缓存或其他设置。
+Provider 图标会缓存在 Scriptable 本地；图标不可用时自动回退到字母标志，不影响余额查询。请求失败时会使用用户设置有效期内的本地缓存，并标注“缓存数据”。
 
 ## 安装
 
 ### 推荐：一键安装器
 
-1. 首次只需将仓库中的 `Installer.js` 复制到 Scriptable。
-2. 把脚本命名为 `AI Balance Installer` 并运行。
-3. 安装器会自动下载 `AI-Balance`、Core、Provider Adapters、`LPL-Design-System` 和最新版安装器。
-4. 以后运行 `AI Balance Installer` 即可检查更新或重新安装。
-5. 运行 `AI-Balance`，按菜单填入各平台密钥、Codex Access Token 和 SerpBase 剩余额度。
-6. 在桌面添加 Scriptable 中号组件并选择 `AI-Balance`。
+1. 将仓库中的 `Installer.js` 复制到 Scriptable，命名为 `AI Balance Installer`。
+2. 运行安装器，它会下载并校验主脚本、Core、Provider Adapters、设计系统和最新版安装器。
+3. 运行 `AI-Balance`，配置 DeepSeek API Key、Codex Access Token 和 Muteki API Key。
+4. 在桌面添加 Scriptable 小号、中号或大号组件，并选择 `AI-Balance`。
 
-安装器会先下载并校验所有文件，确认完整后才写入；安装中断时会恢复原文件。更新不会覆盖 Keychain 密钥、设置或余额缓存。安装器会优先读取仓库中的 `manifest.json` 获取版本和资源列表，manifest 不可用时自动回退到内置资源。
+安装器只有在全部资源下载和标记校验成功后才写入；写入失败会恢复原文件。更新不会覆盖 Keychain、设置、余额缓存或历史。
 
 ### 手动安装
 
-也可以将 `AI-Balance.js`、`AI-Balance-Core.js`、`AI-Balance-Providers.js` 和 `LPL-Design-System.js` 一起复制到 Scriptable 的 iCloud Drive 目录。
+将以下文件放入 Scriptable 的同一 iCloud Drive 目录：
 
-密钥通过 Scriptable `Keychain` 保存，不会写入脚本或设置 JSON。
+- `AI-Balance.js`
+- `AI-Balance-Core.js`
+- `AI-Balance-Providers.js`
+- `LPL-Design-System.js`
 
-## 密钥权限
+## 凭据与安全
 
-- DeepSeek / StepFun / Kimi：普通 API Key。
-- Codex：ChatGPT/Codex Access Token。脚本会优先从 Token 自动识别 Account ID，识别失败时可单独填写。
-- SerpBase：无需把 Key 填入本脚本。
+- DeepSeek API Key：保存为 `ai-balance.deepseek`
+- Codex Access Token：保存为 `ai-balance.codex`
+- Muteki API Key：保存为 `ai-balance.muteki`
 
-Codex Access Token 属于登录凭据，请只在自己的设备间传递，不能提交到 GitHub 或发送给他人。Token 可能会过期；组件出现授权错误时，需要重新填写最新 Token。由于 OpenAI 尚未提供稳定的第三方 Codex 额度 API，这一项属于实验性支持。
+凭据只进入 Scriptable Keychain 和请求鉴权边界，不写入 settings JSON、cache、history、WebView HTML、diagnostics 或 console。旧版的 StepFun/Kimi Keychain 不会在升级时自动删除，便于回滚旧版本，但新运行时不再读取它们。
 
-推荐使用与 LPL Schedule 相同的中号组件；大号组件会使用余额卡片加明细列表，小号显示前三个已配置项目。请求失败时会使用 24 小时内的本地缓存，并标注为“缓存数据”。
+Codex 使用非公开稳定的客户端额度接口，Token 可能过期，接口字段也可能变化；请求失败时会按现有缓存策略回退。
 
-在 Scriptable App 内运行主脚本可以设置服务显示/隐藏和顺序、刷新频率、缓存时长、Kimi 中国站或国际站以及主题。余额低于 ¥10、Codex 剩余低于 20% 或 SerpBase 少于 100 credits 时使用红色警示。点击服务可打开对应平台控制台。
+## 设置与显示
 
-v2.0 起设置界面使用类似 iOS 设置的 WebView 分组页面。修改完成后点击左上角关闭即可统一保存；已有密钥不会载入 WebView，只会显示是否已配置。页面底部仍可打开经典设置菜单。
+在 Scriptable App 内运行主脚本，可以维护三组凭据、Codex Account ID、Provider 顺序与隐藏项、刷新频率、缓存时长、主题和预览尺寸。
 
-API 密钥区默认保持精简，点击某个平台后才展开新密钥输入框和清除操作；SerpBase 手动额度与 Codex ID 位于单独的“账户详情”分组。
+警示阈值分为：
 
-警示阈值可以自行调整。设置菜单还可以选择小号、中号或大号进行 App 内预览，并生成不包含密钥、Token 和 Account ID 的诊断报告。
+- 人民币低余额阈值，供 DeepSeek 使用
+- 美元低余额阈值，供 Muteki 使用，默认 `$2`
+- Codex 剩余额度阈值
 
-如果使用 Kimi 国际站或其他美元余额，可在设置中填写 USD→CNY 参考汇率；大号组件会同时显示美元余额和人民币估算。汇率完全由用户维护，不会自动联网获取，也不构成实时财务报价。
+`USD → CNY` 参考汇率继续由用户手工维护。大号组件可同时显示 Muteki 美元余额与人民币估算；设置为 `0` 时关闭人民币参考值，不会自动联网获取汇率。
 
-大号组件会显示余额相对上次成功数据的升降变化，以及充值、赠送、现金和代金券明细；Codex 卡片包含五小时剩余额度进度条。
+大号组件顶部保留 DeepSeek 与 Codex 卡片。Codex 卡片将 5 小时额度和周额度作为两个等权指标，并分别显示各自重置时间，不再显示进度条。Muteki 明细显示钱包余额、今日消费以及本地计算的日/周余额变化。
 
-Codex 主值显示 5 小时窗口剩余百分比；如果接口同时返回周窗口，大号卡片会在副信息中显示周剩余百分比。接口字段缺失时会根据窗口顺序和重置时间兼容解析。
-
-当 Codex 额度为 0 时，副信息会改为显示下次重置日期时间，不再显示“Codex 订阅额度”。
-
-大号组件顶部的两个余额卡片使用统一尺寸，平台名称或明细较长时会自动缩放文字，保持两张半透明背景框对齐。
-
-顶部余额卡片的服务名称使用 15 号高对比度字体，便于识别 DeepSeek 和 Codex。
-
-组件还会在 Scriptable 本地保存最多 8 天的余额历史，大号组件可显示相对约 24 小时前和 7 天前的变化。历史文件只包含时间、数值和单位，不包含密钥、Token 或原始接口响应。
-
-如果组件意外显示为浅色，请在 Scriptable App 内运行脚本，选择“主题”，再选择“深蓝主题（与 LPL 一致）”。iOS 组件尺寸由添加组件时选择，脚本无法把已经添加的大号组件自动改成中号。
+组件最多保留约 8 天历史，只保存时间、数值和单位，不保存凭据、账户信息或原始 API 响应。
 
 ## 数据接口
 
 - DeepSeek：`GET https://api.deepseek.com/user/balance`
-- StepFun：`GET https://api.stepfun.com/v1/accounts`
-- Codex：Codex 客户端额度接口（非公开稳定 API，接口变化时会回退缓存）
-- Kimi：`GET https://api.moonshot.cn/v1/users/me/balance`
+- Codex：Codex 客户端额度接口（实验性）
+- Muteki：`GET https://api.muteki.site/v1/usage`
+
+Muteki 使用普通 API Key：
+
+```http
+Authorization: Bearer <Muteki API Key>
+Accept: application/json
+```
+
+脚本读取 `remaining`，缺失时回退到 `balance`；使用 `usage.today.actual_cost` 显示今日消费。不会使用后台 Cookie、登录 JWT、Session 或 `/api/v1/auth/me`。
 
 ## Architecture
 
-v2.1 架构将 Provider 私有响应字段限制在 Adapter 层，Widget Renderer 只消费统一结果：
-
 ```text
-Provider API / Manual Data
+Provider API
         ↓
 Provider Adapter
         ↓
@@ -88,8 +83,8 @@ Cache / History / ViewModel
 Widget Renderer
 ```
 
-- `AI-Balance-Providers.js` 集中 Provider registry、请求解释和兼容逻辑。
-- `AI-Balance-Core.js` 提供跨 Scriptable/Node.js 共用的标准化、额度窗口、缓存、历史和数值纯函数。
-- `AI-Balance.js` 保留 Scriptable 生命周期、Keychain/本地文件桥接、设置界面和 Widget Renderer。
+- `AI-Balance-Providers.js`：Provider registry、请求、解析和字段兼容。
+- `AI-Balance-Core.js`：标准化、额度窗口、缓存、历史、阈值和数值纯函数。
+- `AI-Balance.js`：Scriptable 生命周期、Keychain/本地文件桥接、设置界面和 Renderer。
 
-现有 Keychain key、设置 JSON、余额缓存、历史和图标缓存保持兼容，升级不要求重新输入凭据。Codex 额度仍属于实验性支持，接口变化时会使用有效期内的本地缓存。
+Renderer 只消费标准化结果，不直接读取 `balance_infos`、`used_percent`、`primary_window`、`remaining` 或 `usage.today` 等 Provider 私有字段。

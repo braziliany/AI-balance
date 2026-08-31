@@ -20,12 +20,16 @@ const source = fs
   );
 const { Core, ProviderAdapters } = require("./load-production-modules");
 const storedSettings = JSON.stringify({
-  settingsVersion: 7,
+  settingsVersion: 8,
   themeMode: "light",
-  providerOrder: ["kimi", "deepseek"],
-  hiddenProviders: ["stepfun"],
+  providerOrder: ["kimi", "codex", "deepseek", "stepfun", "serpbase"],
+  hiddenProviders: ["kimi", "deepseek", "serpbase"],
   cacheHours: 48,
   codexAccountId: "account-settings",
+  kimiRegion: "international",
+  serpBaseCredits: 300,
+  lowMoneyThreshold: 12,
+  lowCreditsThreshold: 100,
 });
 const context = {
   importModule: (name) => {
@@ -54,11 +58,18 @@ const migratedSettings = api.loadSettings();
 assert.equal(migratedSettings.themeMode, "light");
 assert.equal(migratedSettings.cacheHours, 48);
 assert.equal(migratedSettings.codexAccountId, "account-settings");
+assert.equal(migratedSettings.settingsVersion, 9);
 assert.deepEqual(
   Array.from(migratedSettings.providerOrder),
-  ["kimi", "deepseek", "stepfun", "codex", "serpbase"]
+  ["codex", "deepseek", "muteki"]
 );
-assert.deepEqual(Array.from(migratedSettings.hiddenProviders), ["stepfun"]);
+assert.deepEqual(Array.from(migratedSettings.hiddenProviders), ["deepseek"]);
+assert.equal(migratedSettings.lowCnyThreshold, 12);
+assert.equal(migratedSettings.lowUsdThreshold, 2);
+assert.equal(Object.hasOwn(migratedSettings, "kimiRegion"), false);
+assert.equal(Object.hasOwn(migratedSettings, "serpBaseCredits"), false);
+assert.equal(Object.hasOwn(migratedSettings, "lowMoneyThreshold"), false);
+assert.equal(Object.hasOwn(migratedSettings, "lowCreditsThreshold"), false);
 
 const webSettings = { ...migratedSettings };
 api.applyWebSettings(webSettings, {
@@ -75,18 +86,18 @@ assert.equal(
 );
 
 const ordered = api.orderedProviders({
-  providerOrder: ["kimi", "codex", "deepseek", "stepfun", "serpbase"],
-  hiddenProviders: ["stepfun", "serpbase"],
+  providerOrder: ["codex", "deepseek", "muteki"],
+  hiddenProviders: ["deepseek"],
 });
 assert.deepEqual(
   Array.from(ordered, (provider) => provider.id),
-  ["kimi", "codex", "deepseek"]
+  ["codex", "muteki"]
 );
 
 const thresholds = {
-  lowMoneyThreshold: 10,
+  lowCnyThreshold: 10,
+  lowUsdThreshold: 2,
   lowQuotaThreshold: 20,
-  lowCreditsThreshold: 100,
 };
 assert.equal(
   Core.isLowBalance({ status: "ok", unit: "¥", value: 8 }, thresholds),
@@ -97,7 +108,10 @@ assert.equal(
   false
 );
 assert.equal(
-  Core.isLowBalance({ status: "cached", unit: "次", value: 100 }, thresholds),
+  Core.isLowBalance(
+    { status: "cached", unit: "$", currency: "USD", value: 2 },
+    thresholds
+  ),
   true
 );
 assert.equal(
@@ -120,6 +134,9 @@ assert.match(settingsHTML, /经典设置菜单/);
 assert.doesNotMatch(settingsHTML, /sk-test-secret/);
 assert.doesNotMatch(settingsHTML, /account-test/);
 assert.match(settingsHTML, /codexAccountIdConfigured/);
+assert.match(settingsHTML, /Muteki/);
+assert.match(settingsHTML, /USD → CNY 参考汇率/);
+assert.doesNotMatch(settingsHTML, /StepFun|Kimi|SerpBase|manual-serpbase/);
 
 const report = api.diagnosticReport(
   { ...api.CONFIG, codexAccountId: "account-report" },

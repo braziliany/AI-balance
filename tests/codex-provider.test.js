@@ -12,18 +12,18 @@ const parse = (name) => parseProviderFixture("codex", fixture(name), { now });
 
 const dual = parse("codex-5h-weekly");
 assert.equal(dual.display, "77%");
-assert.equal(dual.detail, "5小时剩余");
+assert.equal(dual.detail, "5小时额度");
 assert.equal(dual.quota.shortWindowRemainingPercent, 77);
 assert.equal(dual.quota.weeklyRemainingPercent, 59);
 
 const weeklyOnly = parse("codex-weekly-only");
 assert.equal(weeklyOnly.display, "29%");
-assert.equal(weeklyOnly.detail, "周剩余");
+assert.equal(weeklyOnly.detail, "周额度");
 assert.equal(weeklyOnly.quota.shortWindowRemainingPercent, null);
 
 const missing = parse("codex-missing-window-minutes");
 assert.equal(missing.display, "68%");
-assert.equal(missing.detail, "5小时剩余");
+assert.equal(missing.detail, "5小时额度");
 assert.equal(missing.quota.weeklyRemainingPercent, 52);
 
 const resetAt = parse("codex-reset-at");
@@ -36,8 +36,16 @@ assert.equal(resetAfter.quota.weeklyResetAt, now + 604_800_000);
 
 const exhausted = parse("codex-exhausted");
 assert.equal(exhausted.display, "0%");
-assert.match(exhausted.secondaryDetail, /下次重置/);
-assert.doesNotMatch(exhausted.secondaryDetail, /订阅额度/);
+assert.equal(exhausted.quota.shortWindowRemainingPercent, 0);
+assert.equal(exhausted.quota.weeklyRemainingPercent, 0);
+assert.equal(Object.hasOwn(exhausted, "progress"), false);
+
+const widgetSource = fs.readFileSync(path.join(__dirname, "..", "AI-Balance.js"), "utf8");
+assert.match(widgetSource, /item\.quota\.shortWindowRemainingPercent/);
+assert.match(widgetSource, /item\.quota\.weeklyRemainingPercent/);
+assert.match(widgetSource, /item\.quota\.shortWindowResetAt/);
+assert.match(widgetSource, /item\.quota\.weeklyResetAt/);
+assert.doesNotMatch(widgetSource, /item\.progress|progress bar/i);
 
 assert.equal(Core.remainingPercent({ used_percent: 120 }), 0);
 assert.equal(Core.remainingPercent({}), null);

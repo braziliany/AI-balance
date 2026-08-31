@@ -4,7 +4,7 @@
 
 /**
  * AI Balance Widget
- * DeepSeek / StepFun / Codex / SerpBase / Kimi 余额概览
+ * DeepSeek / Codex / Muteki 余额与额度概览
  *
  * 依赖：AI-Balance-Core.js、AI-Balance-Providers.js、LPL-Design-System.js
  * （均与本脚本放在 Scriptable 同一目录）
@@ -14,7 +14,7 @@
 const APP = {
   name: "AI Balance",
   version: "2.1.0",
-  settingsVersion: 8,
+  settingsVersion: 9,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
   historyFile: "ai-balance-history.json",
@@ -43,13 +43,11 @@ const CONFIG = {
   refreshMinutes: 30,
   cacheHours: 24,
   codexAccountId: "",
-  serpBaseCredits: 0,
-  kimiRegion: "cn",
   hiddenProviders: [],
-  providerOrder: ["deepseek", "stepfun", "codex", "serpbase", "kimi"],
-  lowMoneyThreshold: 10,
+  providerOrder: ["deepseek", "codex", "muteki"],
+  lowCnyThreshold: 10,
+  lowUsdThreshold: 2,
   lowQuotaThreshold: 20,
-  lowCreditsThreshold: 100,
   usdToCnyRate: 0,
   previewFamily: "medium",
 };
@@ -88,20 +86,46 @@ function loadSettings() {
     if (!stored.settingsVersion) stored.themeMode = "dark";
     const providerIds = PROVIDERS.map((provider) => provider.id);
     const storedOrder = Array.isArray(stored.providerOrder)
-      ? stored.providerOrder.filter((id) => providerIds.includes(id))
+      ? [...new Set(stored.providerOrder)].filter((id) =>
+          providerIds.includes(id)
+        )
       : [];
     const providerOrder = [
       ...storedOrder,
       ...providerIds.filter((id) => !storedOrder.includes(id)),
     ];
     const hiddenProviders = Array.isArray(stored.hiddenProviders)
-      ? stored.hiddenProviders.filter((id) => providerIds.includes(id))
+      ? [...new Set(stored.hiddenProviders)].filter((id) =>
+          providerIds.includes(id)
+        )
       : [];
+    const {
+      kimiRegion: _kimiRegion,
+      serpBaseCredits: _serpBaseCredits,
+      lowCreditsThreshold: _lowCreditsThreshold,
+      lowMoneyThreshold,
+      ...compatibleStored
+    } = stored;
+    const storedCnyThreshold = Number(stored.lowCnyThreshold);
+    const legacyMoneyThreshold = Number(lowMoneyThreshold);
+    const storedUsdThreshold = Number(stored.lowUsdThreshold);
+    const lowCnyThreshold =
+      Number.isFinite(storedCnyThreshold) && storedCnyThreshold >= 0
+        ? storedCnyThreshold
+        : Number.isFinite(legacyMoneyThreshold) && legacyMoneyThreshold >= 0
+          ? legacyMoneyThreshold
+          : CONFIG.lowCnyThreshold;
+    const lowUsdThreshold =
+      Number.isFinite(storedUsdThreshold) && storedUsdThreshold >= 0
+        ? storedUsdThreshold
+        : CONFIG.lowUsdThreshold;
     return {
       ...CONFIG,
-      ...stored,
+      ...compatibleStored,
       providerOrder,
       hiddenProviders,
+      lowCnyThreshold,
+      lowUsdThreshold,
       previewFamily: ["small", "medium", "large"].includes(
         stored.previewFamily
       )
@@ -236,8 +260,8 @@ async function loadBalances(settings) {
   const now = Date.now();
   const results = await Promise.all(
     orderedProviders(settings).map(async (provider) => {
-      const credential = provider.manual ? "" : getSecret(provider.id);
-      if (!provider.manual && !credential) {
+      const credential = getSecret(provider.id);
+      if (!credential) {
         return Core.createUnconfiguredResult(provider, now);
       }
       try {
@@ -335,16 +359,14 @@ function addProviderRow(parent, item, palette, logos, compact = false) {
   info.layoutVertically();
   addText(info, item.name, compact ? 12 : 14, palette.white, "bold");
   if (!compact) addText(info, item.detail, 10, palette.secondary);
-  if (!compact && Number.isFinite(item.progress)) {
-    info.addSpacer(4);
-    const track = info.addStack();
-    track.size = new Size(72, 3);
-    track.cornerRadius = 1.5;
-    track.backgroundColor = new Color(palette.divider, 0.1);
-    const fill = track.addStack();
-    fill.size = new Size(Math.max(2, Math.round(item.progress * 72)), 3);
-    fill.cornerRadius = 1.5;
-    fill.backgroundColor = new Color(item.isLow ? palette.red : palette.yellow);
+  if (!compact) {
+    const extra = [item.secondaryDetail, item.convertedDisplay]
+      .filter(Boolean)
+      .join(" · ");
+    if (extra) addText(info, extra, 9, palette.muted);
+    if (item.periodDetail) {
+      addText(info, item.periodDetail, 9, palette[item.color]);
+    }
   }
   row.addSpacer();
   const color = item.isLow
@@ -402,18 +424,95 @@ function addBalanceCard(parent, item, palette, logos) {
     card.addSpacer(2);
     addText(card, item.periodDetail, 9, palette[item.color]);
   }
-  if (Number.isFinite(item.progress)) {
-    card.addSpacer(7);
-    const track = card.addStack();
-    track.size = new Size(100, 4);
-    track.cornerRadius = 2;
-    track.backgroundColor = new Color(palette.divider, 0.1);
-    const fill = track.addStack();
-    fill.size = new Size(Math.max(2, Math.round(item.progress * 100)), 4);
-    fill.cornerRadius = 2;
-    fill.backgroundColor = new Color(item.isLow ? palette.red : palette.yellow);
-  }
   return card;
+}
+
+function formatQuotaReset(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return "重置 --";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "重置 --";
+  const now = new Date();
+  const pad = (part) => String(part).padStart(2, "0");
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return sameDay
+    ? `重置 ${time}`
+    : `重置 ${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
+
+function addCodexQuotaMetric(parent, value, label, resetAt, palette, isLow) {
+  const column = parent.addStack();
+  column.layoutVertically();
+  column.size = new Size(58, 67);
+  const hasValue =
+    value !== null && value !== undefined && Number.isFinite(Number(value));
+  const display = hasValue ? `${Number(value)}%` : "--";
+  addText(
+    column,
+    display,
+    20,
+    isLow ? palette.red : palette.white,
+    "bold"
+  );
+  column.addSpacer(2);
+  addText(column, label, 9, palette.secondary, "bold");
+  column.addSpacer(3);
+  addText(column, formatQuotaReset(resetAt), 8, palette.muted);
+}
+
+function addCodexQuotaCard(parent, item, palette, logos, settings) {
+  const card = parent.addStack();
+  card.url = item.dashboardUrl;
+  card.layoutVertically();
+  card.size = new Size(150, 145);
+  card.setPadding(11, 12, 10, 12);
+  card.cornerRadius = 12;
+  card.backgroundColor = new Color(palette.divider, 0.07);
+
+  const top = card.addStack();
+  top.centerAlignContent();
+  addProviderBadge(top, item, palette, logos, true);
+  top.addSpacer(7);
+  addText(top, item.name, 15, palette.white, "bold");
+  card.addSpacer(8);
+
+  const metrics = card.addStack();
+  const shortValue = item.quota.shortWindowRemainingPercent;
+  const weeklyValue = item.quota.weeklyRemainingPercent;
+  addCodexQuotaMetric(
+    metrics,
+    shortValue,
+    "5小时额度",
+    item.quota.shortWindowResetAt,
+    palette,
+    shortValue !== null &&
+      shortValue !== undefined &&
+      Number.isFinite(Number(shortValue)) &&
+      Number(shortValue) <= settings.lowQuotaThreshold
+  );
+  metrics.addSpacer(8);
+  addCodexQuotaMetric(
+    metrics,
+    weeklyValue,
+    "周额度",
+    item.quota.weeklyResetAt,
+    palette,
+    weeklyValue !== null &&
+      weeklyValue !== undefined &&
+      Number.isFinite(Number(weeklyValue)) &&
+      Number(weeklyValue) <= settings.lowQuotaThreshold
+  );
+  return card;
+}
+
+function addHighlightCard(parent, item, palette, logos, settings) {
+  return item.id === "codex"
+    ? addCodexQuotaCard(parent, item, palette, logos, settings)
+    : addBalanceCard(parent, item, palette, logos);
 }
 
 function createWidget(items, settings, logos, familyOverride = null) {
@@ -438,10 +537,12 @@ function createWidget(items, settings, logos, familyOverride = null) {
     }
   } else if (family === "large") {
     const highlights = widget.addStack();
-    if (items[0]) addBalanceCard(highlights, items[0], palette, logos);
+    if (items[0]) {
+      addHighlightCard(highlights, items[0], palette, logos, settings);
+    }
     if (items[1]) {
       highlights.addSpacer(10);
-      addBalanceCard(highlights, items[1], palette, logos);
+      addHighlightCard(highlights, items[1], palette, logos, settings);
     }
     if (items.length) widget.addSpacer(13);
 
@@ -571,9 +672,9 @@ async function editWarningThresholds(settings) {
   const alert = new Alert();
   alert.title = "低余额警示阈值";
   alert.message = "达到或低于阈值时使用红色显示";
-  alert.addTextField("金额", String(settings.lowMoneyThreshold));
+  alert.addTextField("人民币余额", String(settings.lowCnyThreshold));
+  alert.addTextField("美元余额", String(settings.lowUsdThreshold));
   alert.addTextField("Codex %", String(settings.lowQuotaThreshold));
-  alert.addTextField("SerpBase credits", String(settings.lowCreditsThreshold));
   alert.addAction("保存");
   alert.addCancelAction("取消");
   if ((await alert.presentAlert()) === -1) return;
@@ -582,9 +683,9 @@ async function editWarningThresholds(settings) {
     Number(alert.textFieldValue(index))
   );
   if (values.every((value) => Number.isFinite(value) && value >= 0)) {
-    settings.lowMoneyThreshold = values[0];
-    settings.lowQuotaThreshold = values[1];
-    settings.lowCreditsThreshold = values[2];
+    settings.lowCnyThreshold = values[0];
+    settings.lowUsdThreshold = values[1];
+    settings.lowQuotaThreshold = Math.min(100, values[2]);
   }
 }
 
@@ -635,9 +736,8 @@ function settingsPageHTML(settings) {
     name: provider.name,
     shortName: provider.shortName,
     color: provider.color,
-    manual: Boolean(provider.manual),
     keyLabel: provider.keyLabel || "",
-    configured: provider.manual ? true : Boolean(getSecret(provider.id)),
+    configured: Boolean(getSecret(provider.id)),
   }));
   const initial = JSON.stringify({
     version: APP.version,
@@ -678,16 +778,15 @@ button.action{border:0;background:transparent;color:var(--blue);font:16px -apple
 <label class="row"><span class="icon purple">UI</span><span class="label"><strong>主题</strong></span><select id="themeMode"><option value="dark">深蓝主题</option><option value="system">跟随系统</option></select></label>
 <label class="row"><span class="icon purple">□</span><span class="label"><strong>预览尺寸</strong></span><select id="previewFamily"><option value="small">小号</option><option value="medium">中号</option><option value="large">大号</option></select></label>
 </div></section>
-<section class="section"><p class="section-title">刷新与区域</p><div class="card">
+<section class="section"><p class="section-title">刷新与汇率</p><div class="card">
 <label class="row"><span class="icon blue">↻</span><span class="label"><strong>刷新频率</strong></span><select id="refreshMinutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option></select></label>
 <label class="row"><span class="icon blue">C</span><span class="label"><strong>缓存时长</strong></span><select id="cacheHours"><option value="6">6 小时</option><option value="12">12 小时</option><option value="24">24 小时</option><option value="48">48 小时</option></select></label>
-<label class="row"><span class="icon green">KM</span><span class="label"><strong>Kimi 区域</strong></span><select id="kimiRegion"><option value="cn">中国站</option><option value="international">国际站</option></select></label>
-<label class="row"><span class="icon green">¥</span><span class="label"><strong>USD→CNY 汇率</strong><span class="hint">0 表示关闭人民币估算</span></span><input id="usdToCnyRate" type="number" min="0" step="0.01"></label>
+<label class="row"><span class="icon green">$</span><span class="label"><strong>USD → CNY 参考汇率</strong><span class="hint">0 表示关闭人民币估算</span></span><input id="usdToCnyRate" type="number" min="0" step="0.01"></label>
 </div></section>
 <section class="section"><p class="section-title">警示阈值</p><div class="card">
-<label class="row"><span class="icon red">¥</span><span class="label"><strong>余额</strong></span><input id="lowMoneyThreshold" type="number" min="0" step="1"></label>
+<label class="row"><span class="icon red">¥</span><span class="label"><strong>人民币余额</strong></span><input id="lowCnyThreshold" type="number" min="0" step="1"></label>
+<label class="row"><span class="icon red">$</span><span class="label"><strong>美元余额</strong></span><input id="lowUsdThreshold" type="number" min="0" step="0.1"></label>
 <label class="row"><span class="icon red">%</span><span class="label"><strong>Codex 剩余</strong></span><input id="lowQuotaThreshold" type="number" min="0" max="100" step="1"></label>
-<label class="row"><span class="icon red">SB</span><span class="label"><strong>SerpBase credits</strong></span><input id="lowCreditsThreshold" type="number" min="0" step="1"></label>
 </div></section>
 <section class="section"><p class="section-title">工具</p><div class="card">
 <div class="row"><span class="icon blue">↻</span><span class="label"><strong>刷新品牌图标</strong><span class="hint">关闭页面后清除并重新下载</span></span><button class="action" id="refreshLogos">刷新</button></div>
@@ -699,18 +798,17 @@ button.action{border:0;background:transparent;color:var(--blue);font:16px -apple
 const initial=${initial}; const state={refreshLogos:false,legacyMenu:false,resetUI:false,clearSecrets:{},secrets:{}};
 const $=id=>document.getElementById(id); $("version").textContent=initial.version;
 const setValue=(id,value)=>{const node=$(id);if(node)node.value=String(value)};
-["themeMode","previewFamily","refreshMinutes","cacheHours","kimiRegion","usdToCnyRate","lowMoneyThreshold","lowQuotaThreshold","lowCreditsThreshold"].forEach(id=>setValue(id,initial.settings[id]));
+["themeMode","previewFamily","refreshMinutes","cacheHours","usdToCnyRate","lowCnyThreshold","lowUsdThreshold","lowQuotaThreshold"].forEach(id=>setValue(id,initial.settings[id]));
 const toast=text=>{const el=$("toast");el.textContent=text;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),1400)};
 const accounts=$("accounts");
-initial.providers.filter(p=>!p.manual).forEach(p=>{const wrapper=document.createElement("div");const row=document.createElement("div");row.className="row key-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">'+(p.configured?'已配置':'未配置')+'</span></span><span class="chevron">›</span>';const editor=document.createElement("div");editor.className="secret-editor";editor.innerHTML='<input id="secret-'+p.id+'" type="password" placeholder="输入新密钥">'+(p.configured?'<button class="action danger">清除</button>':'');row.onclick=()=>editor.classList.toggle("open");const clear=editor.querySelector("button");if(clear)clear.onclick=e=>{e.stopPropagation();state.clearSecrets[p.id]=true;row.querySelector(".hint").textContent="关闭后清除";editor.classList.remove("open");toast("已标记清除")};wrapper.appendChild(row);wrapper.appendChild(editor);accounts.appendChild(wrapper)});
+initial.providers.forEach(p=>{const wrapper=document.createElement("div");const row=document.createElement("div");row.className="row key-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">'+(p.configured?'已配置':'未配置')+'</span></span><span class="chevron">›</span>';const editor=document.createElement("div");editor.className="secret-editor";editor.innerHTML='<input id="secret-'+p.id+'" type="password" placeholder="输入新密钥">'+(p.configured?'<button class="action danger">清除</button>':'');row.onclick=()=>editor.classList.toggle("open");const clear=editor.querySelector("button");if(clear)clear.onclick=e=>{e.stopPropagation();state.clearSecrets[p.id]=true;row.querySelector(".hint").textContent="关闭后清除";editor.classList.remove("open");toast("已标记清除")};wrapper.appendChild(row);wrapper.appendChild(editor);accounts.appendChild(wrapper)});
 const accountDetails=$("accountDetails");
-accountDetails.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon yellow">SB</span><span class="label"><strong>SerpBase MCP</strong><span class="hint">手动维护剩余额度</span></span><input id="manual-serpbase" type="number" min="0" step="1"></label><label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex ID</strong><span class="hint">'+(initial.codexAccountIdConfigured?'已配置；留空保持':'通常从 Token 自动识别')+'</span></span><input id="codexAccountId" type="text" placeholder="'+(initial.codexAccountIdConfigured?'输入新 ID':'自动')+'"></label>');
-setValue("manual-serpbase",initial.settings.serpBaseCredits);
+accountDetails.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex ID</strong><span class="hint">'+(initial.codexAccountIdConfigured?'已配置；留空保持':'通常从 Token 自动识别')+'</span></span><input id="codexAccountId" type="text" placeholder="'+(initial.codexAccountIdConfigured?'输入新 ID':'自动')+'"></label>');
 setValue("codexAccountId","");
 const providerBox=$("providers");let order=[...initial.settings.providerOrder];const hidden=new Set(initial.settings.hiddenProviders);
 function drawProviders(){providerBox.innerHTML="";order.forEach((id,index)=>{const p=initial.providers.find(x=>x.id===id);const row=document.createElement("div");row.className="row order-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong></span><label class="switch"><input type="checkbox" '+(!hidden.has(id)?"checked":"")+'><span class="slider"></span></label><span class="order-buttons"><button data-d="-1">↑</button><button data-d="1">↓</button></span>';row.querySelector("input").onchange=e=>e.target.checked?hidden.delete(id):hidden.add(id);row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const next=index+Number(b.dataset.d);if(next<0||next>=order.length)return;[order[index],order[next]]=[order[next],order[index]];drawProviders()});providerBox.appendChild(row)})}drawProviders();
 $("refreshLogos").onclick=()=>{state.refreshLogos=true;toast("关闭后刷新图标")};$("legacyMenu").onclick=()=>{state.legacyMenu=true;toast("关闭后打开经典菜单")};$("resetUI").onclick=()=>{state.resetUI=confirm("恢复默认 UI 设置？密钥和额度不会被删除。");if(state.resetUI)toast("关闭后恢复默认")};
-window.__exportSettings=()=>{initial.providers.filter(p=>!p.manual).forEach(p=>{const value=$("secret-"+p.id).value.trim();if(value)state.secrets[p.id]=value});return {...state,settings:{themeMode:$("themeMode").value,previewFamily:$("previewFamily").value,refreshMinutes:Number($("refreshMinutes").value),cacheHours:Number($("cacheHours").value),kimiRegion:$("kimiRegion").value,usdToCnyRate:Number($("usdToCnyRate").value),lowMoneyThreshold:Number($("lowMoneyThreshold").value),lowQuotaThreshold:Number($("lowQuotaThreshold").value),lowCreditsThreshold:Number($("lowCreditsThreshold").value),serpBaseCredits:Number($("manual-serpbase").value),codexAccountId:$("codexAccountId").value.trim(),providerOrder:order,hiddenProviders:[...hidden]}}};
+window.__exportSettings=()=>{initial.providers.forEach(p=>{const value=$("secret-"+p.id).value.trim();if(value)state.secrets[p.id]=value});return {...state,settings:{themeMode:$("themeMode").value,previewFamily:$("previewFamily").value,refreshMinutes:Number($("refreshMinutes").value),cacheHours:Number($("cacheHours").value),usdToCnyRate:Number($("usdToCnyRate").value),lowCnyThreshold:Number($("lowCnyThreshold").value),lowUsdThreshold:Number($("lowUsdThreshold").value),lowQuotaThreshold:Number($("lowQuotaThreshold").value),codexAccountId:$("codexAccountId").value.trim(),providerOrder:order,hiddenProviders:[...hidden]}}};
 </script></body></html>`;
 }
 
@@ -719,13 +817,12 @@ function applyWebSettings(settings, payload) {
     settings.themeMode = CONFIG.themeMode;
     settings.refreshMinutes = CONFIG.refreshMinutes;
     settings.cacheHours = CONFIG.cacheHours;
-    settings.kimiRegion = CONFIG.kimiRegion;
     settings.hiddenProviders = [...CONFIG.hiddenProviders];
     settings.providerOrder = [...CONFIG.providerOrder];
     settings.usdToCnyRate = CONFIG.usdToCnyRate;
-    settings.lowMoneyThreshold = CONFIG.lowMoneyThreshold;
+    settings.lowCnyThreshold = CONFIG.lowCnyThreshold;
+    settings.lowUsdThreshold = CONFIG.lowUsdThreshold;
     settings.lowQuotaThreshold = CONFIG.lowQuotaThreshold;
-    settings.lowCreditsThreshold = CONFIG.lowCreditsThreshold;
     settings.previewFamily = CONFIG.previewFamily;
   } else {
     const next = payload.settings || {};
@@ -743,25 +840,18 @@ function applyWebSettings(settings, payload) {
     settings.cacheHours = [6, 12, 24, 48].includes(next.cacheHours)
       ? next.cacheHours
       : settings.cacheHours;
-    settings.kimiRegion = ["cn", "international"].includes(next.kimiRegion)
-      ? next.kimiRegion
-      : settings.kimiRegion;
     settings.usdToCnyRate = Math.max(0, Number(next.usdToCnyRate) || 0);
-    settings.lowMoneyThreshold = Math.max(
+    settings.lowCnyThreshold = Math.max(
       0,
-      Number(next.lowMoneyThreshold) || 0
+      Number(next.lowCnyThreshold) || 0
+    );
+    settings.lowUsdThreshold = Math.max(
+      0,
+      Number(next.lowUsdThreshold) || 0
     );
     settings.lowQuotaThreshold = Math.min(
       100,
       Math.max(0, Number(next.lowQuotaThreshold) || 0)
-    );
-    settings.lowCreditsThreshold = Math.max(
-      0,
-      Number(next.lowCreditsThreshold) || 0
-    );
-    settings.serpBaseCredits = Math.max(
-      0,
-      Number(next.serpBaseCredits) || 0
     );
     const nextCodexAccountId = String(next.codexAccountId || "").trim();
     if (nextCodexAccountId) settings.codexAccountId = nextCodexAccountId;
@@ -777,7 +867,7 @@ function applyWebSettings(settings, payload) {
       hiddenProviders.length < ids.length ? hiddenProviders : ids.slice(1);
   }
   for (const [id, value] of Object.entries(payload.secrets || {})) {
-    if (PROVIDERS.some((provider) => provider.id === id && !provider.manual)) {
+    if (PROVIDERS.some((provider) => provider.id === id)) {
       setSecret(id, value);
     }
   }
@@ -821,7 +911,7 @@ async function configureLegacy(settings) {
     const sheet = new Alert();
     sheet.title = APP.name;
     sheet.message = "密钥仅保存在 iOS Keychain";
-    PROVIDERS.filter((item) => !item.manual).forEach((item) =>
+    PROVIDERS.forEach((item) =>
       sheet.addAction(
         `${getSecret(item.id) ? "✓ " : ""}${item.keyLabel}`
       )
@@ -829,7 +919,6 @@ async function configureLegacy(settings) {
     sheet.addAction(
       `Codex Account ID：${settings.codexAccountId ? "已配置" : "自动识别"}`
     );
-    sheet.addAction(`SerpBase 剩余额度：${settings.serpBaseCredits}`);
     sheet.addAction(`主题：${settings.themeMode}`);
     sheet.addAction(
       `显示服务：${PROVIDERS.length - settings.hiddenProviders.length} 个`
@@ -838,13 +927,10 @@ async function configureLegacy(settings) {
     sheet.addAction(`刷新频率：${settings.refreshMinutes} 分钟`);
     sheet.addAction(`缓存时长：${settings.cacheHours} 小时`);
     sheet.addAction(
-      `Kimi 区域：${settings.kimiRegion === "cn" ? "中国站" : "国际站"}`
-    );
-    sheet.addAction(
       `USD→CNY：${settings.usdToCnyRate > 0 ? settings.usdToCnyRate : "关闭"}`
     );
     sheet.addAction(
-      `警示阈值：${settings.lowMoneyThreshold} / ${settings.lowQuotaThreshold}% / ${settings.lowCreditsThreshold}`
+      `警示阈值：¥${settings.lowCnyThreshold} / $${settings.lowUsdThreshold} / ${settings.lowQuotaThreshold}%`
     );
     sheet.addAction(`预览尺寸：${settings.previewFamily}`);
     sheet.addAction("刷新品牌图标");
@@ -854,7 +940,7 @@ async function configureLegacy(settings) {
     const choice = await sheet.presentSheet();
     if (choice === -1) break;
 
-    const keyProviders = PROVIDERS.filter((item) => !item.manual);
+    const keyProviders = PROVIDERS;
     if (choice < keyProviders.length) {
       const provider = keyProviders[choice];
       const value = await promptText(
@@ -872,43 +958,28 @@ async function configureLegacy(settings) {
       );
       if (value !== null) settings.codexAccountId = value;
     } else if (choice === keyProviders.length + 1) {
-      const value = await promptText(
-        "SerpBase 剩余额度",
-        "SerpBase 暂无公开余额 API，请从控制台复制",
-        settings.serpBaseCredits
-      );
-      if (value !== null && Number.isFinite(Number(value))) {
-        settings.serpBaseCredits = Math.max(0, Number(value));
-      }
-    } else if (choice === keyProviders.length + 2) {
       settings.themeMode = await chooseThemeMode(settings.themeMode);
-    } else if (choice === keyProviders.length + 3) {
+    } else if (choice === keyProviders.length + 2) {
       settings.hiddenProviders = await chooseVisibleProviders(
         settings.hiddenProviders
       );
-    } else if (choice === keyProviders.length + 4) {
+    } else if (choice === keyProviders.length + 3) {
       settings.providerOrder = await chooseProviderOrder(
         settings.providerOrder
       );
-    } else if (choice === keyProviders.length + 5) {
+    } else if (choice === keyProviders.length + 4) {
       settings.refreshMinutes = await chooseOption(
         "刷新频率",
         settings.refreshMinutes,
         [[15, "15 分钟"], [30, "30 分钟"], [60, "60 分钟"]]
       );
-    } else if (choice === keyProviders.length + 6) {
+    } else if (choice === keyProviders.length + 5) {
       settings.cacheHours = await chooseOption(
         "缓存时长",
         settings.cacheHours,
         [[6, "6 小时"], [12, "12 小时"], [24, "24 小时"], [48, "48 小时"]]
       );
-    } else if (choice === keyProviders.length + 7) {
-      settings.kimiRegion = await chooseOption(
-        "Kimi 区域",
-        settings.kimiRegion,
-        [["cn", "中国站（CNY）"], ["international", "国际站（USD）"]]
-      );
-    } else if (choice === keyProviders.length + 8) {
+    } else if (choice === keyProviders.length + 6) {
       const value = await promptText(
         "USD → CNY 参考汇率",
         "仅用于本地估算；填 0 关闭人民币并列显示",
@@ -917,29 +988,28 @@ async function configureLegacy(settings) {
       if (value !== null && Number.isFinite(Number(value))) {
         settings.usdToCnyRate = Math.max(0, Number(value));
       }
-    } else if (choice === keyProviders.length + 9) {
+    } else if (choice === keyProviders.length + 7) {
       await editWarningThresholds(settings);
-    } else if (choice === keyProviders.length + 10) {
+    } else if (choice === keyProviders.length + 8) {
       settings.previewFamily = await chooseOption(
         "预览尺寸",
         settings.previewFamily,
         [["small", "小号"], ["medium", "中号"], ["large", "大号"]]
       );
-    } else if (choice === keyProviders.length + 11) {
+    } else if (choice === keyProviders.length + 9) {
       await refreshProviderLogos();
-    } else if (choice === keyProviders.length + 12) {
+    } else if (choice === keyProviders.length + 10) {
       await presentDiagnostics(settings);
     } else {
       settings.themeMode = "dark";
       settings.refreshMinutes = CONFIG.refreshMinutes;
       settings.cacheHours = CONFIG.cacheHours;
-      settings.kimiRegion = CONFIG.kimiRegion;
       settings.hiddenProviders = [...CONFIG.hiddenProviders];
       settings.providerOrder = [...CONFIG.providerOrder];
       settings.usdToCnyRate = CONFIG.usdToCnyRate;
-      settings.lowMoneyThreshold = CONFIG.lowMoneyThreshold;
+      settings.lowCnyThreshold = CONFIG.lowCnyThreshold;
+      settings.lowUsdThreshold = CONFIG.lowUsdThreshold;
       settings.lowQuotaThreshold = CONFIG.lowQuotaThreshold;
-      settings.lowCreditsThreshold = CONFIG.lowCreditsThreshold;
       settings.previewFamily = CONFIG.previewFamily;
     }
     saveSettings(settings);

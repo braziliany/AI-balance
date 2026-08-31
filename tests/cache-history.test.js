@@ -5,9 +5,9 @@ const { PROVIDERS } = ProviderAdapters;
 const deepseek = PROVIDERS.find((provider) => provider.id === "deepseek");
 const now = 100_000_000;
 const settings = {
-  lowMoneyThreshold: 10,
+  lowCnyThreshold: 10,
+  lowUsdThreshold: 2,
   lowQuotaThreshold: 20,
-  lowCreditsThreshold: 100,
 };
 const success = Core.normalizeProviderResult(
   deepseek,
@@ -62,5 +62,16 @@ Core.applyHistory([result], history, now);
 assert.equal(result.periodDetail, "日 ↓¥2.18 · 周 ↓¥7.18");
 assert.deepEqual(history.deepseek.at(-1), { at: now, value: 22.82, unit: "¥" });
 assert.equal(Object.hasOwn(history.deepseek.at(-1), "successfulFetchedAt"), false);
+
+const muteki = PROVIDERS.find((provider) => provider.id === "muteki");
+const mutekiResult = Core.normalizeProviderResult(
+  muteki,
+  { value: 6.23, unit: "$", currency: "USD", display: "$6.23" },
+  { status: "ok", renderedAt: now, successfulFetchedAt: now }
+);
+const mutekiHistory = {};
+Core.applyHistory([mutekiResult], mutekiHistory, now);
+assert.deepEqual(mutekiHistory.muteki, [{ at: now, value: 6.23, unit: "$" }]);
+assert.equal(Core.isLowBalance(mutekiResult, settings), false);
 
 console.log("cache and history: ok");

@@ -48,7 +48,7 @@ assert.equal(typeof Core.normalizeProviderResult, "function");
 assert.equal(typeof Providers.fetchProvider, "function");
 assert.deepEqual(
   Array.from(Providers.PROVIDERS, (provider) => provider.id),
-  ["deepseek", "stepfun", "codex", "serpbase", "kimi"]
+  ["deepseek", "codex", "muteki"]
 );
 
 console.log("scriptable runtime compatibility: ok");
