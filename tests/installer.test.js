@@ -43,7 +43,7 @@ const manifest = JSON.parse(
 assert.deepEqual(resources, manifest.resources);
 assert.equal(
   context.__installerTestApi.normalizeManifest(manifest).version,
-  "2.1.0"
+  "2.2.0"
 );
 assert.throws(
   () => context.__installerTestApi.normalizeManifest({

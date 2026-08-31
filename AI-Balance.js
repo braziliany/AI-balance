@@ -13,7 +13,7 @@
 
 const APP = {
   name: "AI Balance",
-  version: "2.1.0",
+  version: "2.2.0",
   settingsVersion: 9,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
