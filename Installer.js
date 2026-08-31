@@ -10,40 +10,40 @@
  */
 
 const CONFIG = {
-  version: "2.0.5",
+  version: "2.1.0",
   manifestUrl:
-    "https://raw.githubusercontent.com/braziliany/AI-balance/codex/v2.1-provider-architecture/manifest.json",
+    "https://raw.githubusercontent.com/braziliany/AI-balance/main/manifest.json",
   changelogUrl:
-    "https://raw.githubusercontent.com/braziliany/AI-balance/codex/v2.1-provider-architecture/CHANGELOG.md",
+    "https://raw.githubusercontent.com/braziliany/AI-balance/main/CHANGELOG.md",
   resources: [
     {
       scriptName: "LPL-Design-System",
       sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/codex/v2.1-provider-architecture/LPL-Design-System.js",
+        "https://raw.githubusercontent.com/braziliany/AI-balance/main/LPL-Design-System.js",
       marker: "LPL Scriptable Design System",
     },
     {
       scriptName: "AI-Balance-Core",
       sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/codex/v2.1-provider-architecture/AI-Balance-Core.js",
+        "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance-Core.js",
       marker: "AI Balance Core",
     },
     {
       scriptName: "AI-Balance-Providers",
       sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/codex/v2.1-provider-architecture/AI-Balance-Providers.js",
+        "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance-Providers.js",
       marker: "AI Balance Provider Adapters",
     },
     {
       scriptName: "AI-Balance",
       sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/codex/v2.1-provider-architecture/AI-Balance.js",
+        "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance.js",
       marker: 'importModule("LPL-Design-System")',
     },
     {
       scriptName: "AI Balance Installer",
       sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/codex/v2.1-provider-architecture/Installer.js",
+        "https://raw.githubusercontent.com/braziliany/AI-balance/main/Installer.js",
       marker: "AI Balance 一键安装器",
     },
   ],

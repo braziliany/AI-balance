@@ -1,6 +1,6 @@
 {
   "name": "ai-balance-scriptable",
-  "version": "2.0.5",
+  "version": "2.1.0",
   "private": true,
   "scripts": {
     "test": "node tests/scriptable-runtime.test.js && node tests/installer.test.js && node tests/installer-atomic.test.js && node tests/widget-core.test.js && node tests/provider-contract.test.js && node tests/provider-fetch.test.js && node tests/codex-provider.test.js && node tests/cache-history.test.js && node tests/release-integrity.test.js",
