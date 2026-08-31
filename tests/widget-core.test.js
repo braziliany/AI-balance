@@ -10,98 +10,69 @@ const source = fs
     "await main();",
     `globalThis.__widgetTestApi = {
       CONFIG,
-      changeText,
-      formatAmount,
+      applyWebSettings,
+      diagnosticReport,
       formatAge,
-      applyHistory,
-      historicalValue,
-      isLowBalance,
+      loadSettings,
       orderedProviders,
-      parseCodexQuota,
-      parseDeepSeekBalance,
-      parseKimiBalance,
-      parseStepFunBalance,
-      remainingPercent,
-      resolveProviderFailure,
       settingsPageHTML,
     };`
   );
+const { Core, ProviderAdapters } = require("./load-production-modules");
+const storedSettings = JSON.stringify({
+  settingsVersion: 7,
+  themeMode: "light",
+  providerOrder: ["kimi", "deepseek"],
+  hiddenProviders: ["stepfun"],
+  cacheHours: 48,
+  codexAccountId: "account-settings",
+});
 const context = {
-  importModule: () => ({
-    resolvePalette: () => ({}),
-    applyCardBackground: () => {},
-  }),
+  importModule: (name) => {
+    if (name === "AI-Balance-Core") return Core;
+    if (name === "AI-Balance-Providers") return ProviderAdapters;
+    return { resolvePalette: () => ({}), applyCardBackground: () => {} };
+  },
   Keychain: {
     contains: () => true,
     get: () => "sk-test-secret",
+  },
+  FileManager: {
+    local: () => ({
+      documentsDirectory: () => "/documents",
+      joinPath: (left, right) => `${left}/${right}`,
+      fileExists: () => true,
+      readString: () => storedSettings,
+      writeString: () => {},
+    }),
   },
 };
 vm.runInNewContext(source, context, { filename: widgetPath });
 
 const api = context.__widgetTestApi;
-const fixture = (name) =>
-  JSON.parse(
-    fs.readFileSync(path.join(__dirname, "fixtures", `${name}.json`), "utf8")
-  );
+const migratedSettings = api.loadSettings();
+assert.equal(migratedSettings.themeMode, "light");
+assert.equal(migratedSettings.cacheHours, 48);
+assert.equal(migratedSettings.codexAccountId, "account-settings");
+assert.deepEqual(
+  Array.from(migratedSettings.providerOrder),
+  ["kimi", "deepseek", "stepfun", "codex", "serpbase"]
+);
+assert.deepEqual(Array.from(migratedSettings.hiddenProviders), ["stepfun"]);
 
-assert.equal(api.parseDeepSeekBalance(fixture("deepseek-balance")).display, "¥22.82");
-assert.equal(api.parseStepFunBalance(fixture("stepfun-account")).value, 15);
-assert.equal(api.parseKimiBalance(fixture("kimi-balance"), "CNY").display, "¥8.07");
-const codex = api.parseCodexQuota(fixture("codex-usage"));
-assert.equal(codex.display, "77%");
-assert.equal(codex.detail, "5小时剩余");
-assert.match(codex.secondaryDetail, /周剩余 59%/);
-const weeklyOnlyCodex = api.parseCodexQuota({
-  rate_limit: {
-    primary_window: { used_percent: 71, window_minutes: 10080 },
-  },
+const webSettings = { ...migratedSettings };
+api.applyWebSettings(webSettings, {
+  settings: { ...webSettings, codexAccountId: "" },
+  secrets: {},
+  clearSecrets: {},
 });
-assert.equal(weeklyOnlyCodex.display, "29%");
-assert.equal(weeklyOnlyCodex.detail, "周剩余");
-const partialWindowCodex = api.parseCodexQuota({
-  rate_limit: {
-    primary_window: { used_percent: 32 },
-    secondary_window: { used_percent: 48, window_minutes: 10080 },
-  },
-});
-assert.equal(partialWindowCodex.display, "68%");
-assert.equal(partialWindowCodex.detail, "5小时剩余");
-assert.match(partialWindowCodex.secondaryDetail, /周剩余 52%/);
-const resetSecondsCodex = api.parseCodexQuota({
-  rate_limit: {
-    primary_window: { used_percent: 20, reset_after_seconds: 18000 },
-    secondary_window: { used_percent: 40, reset_after_seconds: 604800 },
-  },
-});
-assert.equal(resetSecondsCodex.display, "80%");
-assert.match(resetSecondsCodex.secondaryDetail, /周剩余 60%/);
-const exhaustedCodex = api.parseCodexQuota({
-  rate_limit: {
-    primary_window: {
-      used_percent: 100,
-      window_minutes: 300,
-      reset_at: 1893456000,
-    },
-    secondary_window: {
-      used_percent: 100,
-      window_minutes: 10080,
-      reset_at: 1894060800,
-    },
-  },
-});
-assert.equal(exhaustedCodex.display, "0%");
-assert.match(exhaustedCodex.secondaryDetail, /下次重置/);
-assert.doesNotMatch(exhaustedCodex.secondaryDetail, /订阅额度/);
-assert.equal(api.formatAmount(12345.67), "12,346");
+assert.equal(webSettings.codexAccountId, "account-settings");
+assert.equal(Core.formatAmount(12345.67), "12,346");
 assert.equal(api.formatAge(0), "无成功记录");
 assert.equal(
-  api.parseKimiBalance(fixture("kimi-balance"), "USD", 7.2).convertedDisplay,
+  Core.money(8.07, "USD", 7.2).convertedDisplay,
   "≈¥58.10"
 );
-
-assert.equal(api.remainingPercent({ used_percent: 23.4 }), 77);
-assert.equal(api.remainingPercent({ used_percent: 120 }), 0);
-assert.equal(api.remainingPercent({}), null);
 
 const ordered = api.orderedProviders({
   providerOrder: ["kimi", "codex", "deepseek", "stepfun", "serpbase"],
@@ -118,23 +89,23 @@ const thresholds = {
   lowCreditsThreshold: 100,
 };
 assert.equal(
-  api.isLowBalance({ status: "ok", unit: "¥", value: 8 }, thresholds),
+  Core.isLowBalance({ status: "ok", unit: "¥", value: 8 }, thresholds),
   true
 );
 assert.equal(
-  api.isLowBalance({ status: "ok", unit: "%", value: 21 }, thresholds),
+  Core.isLowBalance({ status: "ok", unit: "%", value: 21 }, thresholds),
   false
 );
 assert.equal(
-  api.isLowBalance({ status: "cached", unit: "次", value: 100 }, thresholds),
+  Core.isLowBalance({ status: "cached", unit: "次", value: 100 }, thresholds),
   true
 );
 assert.equal(
-  api.isLowBalance({ status: "error", unit: "¥", value: 0 }, thresholds),
+  Core.isLowBalance({ status: "error", unit: "¥", value: 0 }, thresholds),
   false
 );
-assert.equal(api.changeText(-2.5, "¥"), "↓¥2.50");
-assert.equal(api.changeText(7, "%"), "↑7%");
+assert.equal(Core.changeText(-2.5, "¥"), "↓¥2.50");
+assert.equal(Core.changeText(7, "%"), "↑7%");
 
 const settingsHTML = api.settingsPageHTML({
   ...api.CONFIG,
@@ -147,68 +118,14 @@ assert.match(settingsHTML, /显示服务与顺序/);
 assert.match(settingsHTML, /刷新品牌图标/);
 assert.match(settingsHTML, /经典设置菜单/);
 assert.doesNotMatch(settingsHTML, /sk-test-secret/);
+assert.doesNotMatch(settingsHTML, /account-test/);
+assert.match(settingsHTML, /codexAccountIdConfigured/);
 
-const provider = { id: "deepseek", name: "DeepSeek", color: "yellow" };
-const freshCache = {
-  id: "deepseek",
-  value: 22.82,
-  display: "¥22.82",
-  detail: "充值 ¥22.82",
-  updatedAt: 10_000,
-};
-const cachedFallback = api.resolveProviderFailure(
-  provider,
-  freshCache,
-  11_000,
-  24,
-  new Error("HTTP 429")
+const report = api.diagnosticReport(
+  { ...api.CONFIG, codexAccountId: "account-report" },
+  { codex: { successfulFetchedAt: Date.now(), token: "token-report" } }
 );
-assert.equal(cachedFallback.status, "cached");
-assert.equal(cachedFallback.display, "¥22.82");
-assert.equal(cachedFallback.detail, "缓存数据");
-
-const expiredFallback = api.resolveProviderFailure(
-  provider,
-  freshCache,
-  10_000 + 25 * 3_600_000,
-  24,
-  new Error("密钥失效")
-);
-assert.equal(expiredFallback.status, "error");
-assert.equal(expiredFallback.display, "异常");
-assert.equal(expiredFallback.detail, "密钥失效");
-
-const emptyFallback = api.resolveProviderFailure(
-  provider,
-  null,
-  11_000,
-  24,
-  new Error("网络不可用")
-);
-assert.equal(emptyFallback.status, "error");
-assert.equal(emptyFallback.detail, "网络不可用");
-
-const history = {
-  deepseek: [
-    { at: 1000, value: 20, unit: "¥" },
-    { at: 2000, value: 18, unit: "¥" },
-  ],
-};
-assert.equal(api.historicalValue(history.deepseek, 1500), 20);
-assert.equal(api.historicalValue(history.deepseek, 500), null);
-const now = 8 * 24 * 60 * 60 * 1000;
-const day = 24 * 60 * 60 * 1000;
-const historyWithPeriods = {
-  deepseek: [
-    { at: now - 7 * day - 1000, value: 30, unit: "¥" },
-    { at: now - day - 1000, value: 25, unit: "¥" },
-  ],
-};
-const resultWithHistory = [
-  { id: "deepseek", status: "ok", value: 22.82, unit: "¥" },
-];
-api.applyHistory(resultWithHistory, historyWithPeriods, now);
-assert.equal(resultWithHistory[0].periodDetail, "日 ↓¥2.18 · 周 ↓¥7.18");
-assert.equal(historyWithPeriods.deepseek.at(-1).value, 22.82);
+assert.doesNotMatch(report, /account-report|token-report|sk-test-secret/);
+assert.match(report, /不包含 API Key、Access Token 或 Account ID/);
 
 console.log("widget core: ok");

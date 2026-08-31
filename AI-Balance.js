@@ -6,7 +6,8 @@
  * AI Balance Widget
  * DeepSeek / StepFun / Codex / SerpBase / Kimi 余额概览
  *
- * 依赖：LPL-Design-System.js（与本脚本放在 Scriptable 同一目录）
+ * 依赖：AI-Balance-Core.js、AI-Balance-Providers.js、LPL-Design-System.js
+ * （均与本脚本放在 Scriptable 同一目录）
  * 首次在 Scriptable App 内运行会打开配置菜单，密钥保存于 iOS Keychain。
  */
 
@@ -21,13 +22,20 @@ const APP = {
 };
 
 let DesignSystem;
+let Core;
+let ProviderAdapters;
 try {
   DesignSystem = importModule("LPL-Design-System");
+  Core = importModule("AI-Balance-Core");
+  ProviderAdapters = importModule("AI-Balance-Providers");
 } catch (error) {
   throw new Error(
-    "缺少 LPL-Design-System。请先把 LPL-Design-System.js 放入 Scriptable 目录。"
+    "缺少 AI Balance 依赖模块。请重新运行安装器安装全部脚本。"
   );
 }
+
+const { PROVIDER_STATUSES } = Core;
+const { PROVIDERS } = ProviderAdapters;
 
 const CONFIG = {
   title: "AI BALANCE",
@@ -45,64 +53,6 @@ const CONFIG = {
   usdToCnyRate: 0,
   previewFamily: "medium",
 };
-
-const PROVIDERS = [
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    shortName: "DS",
-    color: "yellow",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/deepseek.png",
-    keyLabel: "DeepSeek API Key",
-    dashboardUrl: "https://platform.deepseek.com/usage",
-    fetch: fetchDeepSeek,
-  },
-  {
-    id: "stepfun",
-    name: "StepFun",
-    shortName: "SF",
-    color: "orange",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/stepfun.png",
-    keyLabel: "StepFun API Key",
-    dashboardUrl: "https://platform.stepfun.com/",
-    fetch: fetchStepFun,
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    shortName: "CX",
-    color: "red",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/codex.png",
-    keyLabel: "Codex Access Token",
-    dashboardUrl: "https://chatgpt.com/codex/settings/usage",
-    fetch: fetchCodex,
-  },
-  {
-    id: "serpbase",
-    name: "SerpBase MCP",
-    shortName: "SB",
-    color: "yellow",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/serpbase.jpg",
-    manual: true,
-    dashboardUrl: "https://serpbase.dev/dashboard",
-    fetch: fetchSerpBase,
-  },
-  {
-    id: "kimi",
-    name: "Kimi",
-    shortName: "KM",
-    color: "orange",
-    logoUrl:
-      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/kimi.png",
-    keyLabel: "Kimi API Key",
-    dashboardUrl: "https://platform.moonshot.cn/console/account",
-    fetch: fetchKimi,
-  },
-];
 
 function keychainKey(id) {
   return `${APP.keychainPrefix}${id}`;
@@ -192,26 +142,6 @@ function writeCache(data) {
   FileManager.local().writeString(cachePath(), JSON.stringify(data));
 }
 
-function resolveProviderFailure(provider, cached, now, cacheHours, error) {
-  const isFresh =
-    cached &&
-    now - Number(cached.updatedAt || 0) < Number(cacheHours) * 3600000;
-  if (isFresh) {
-    return {
-      ...cached,
-      ...provider,
-      status: "cached",
-      detail: "缓存数据",
-    };
-  }
-  return {
-    ...provider,
-    status: "error",
-    display: "异常",
-    detail: String(error?.message || error).slice(0, 24),
-  };
-}
-
 function historyPath() {
   return FileManager.local().joinPath(
     FileManager.local().documentsDirectory(),
@@ -290,242 +220,6 @@ async function loadProviderLogos(providers) {
   return Object.fromEntries(entries);
 }
 
-function formatAmount(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "--";
-  const digits = Math.abs(number) >= 100 ? 0 : 2;
-  try {
-    return number.toLocaleString("zh-CN", {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
-    });
-  } catch (_) {
-    return number.toFixed(digits);
-  }
-}
-
-function money(value, currency, usdToCnyRate = 0) {
-  const number = Number(value);
-  const code = String(currency || "CNY").toUpperCase();
-  const unit = code === "USD" ? "$" : "¥";
-  const rate = Number(usdToCnyRate);
-  return {
-    value: Number.isFinite(number) ? number : 0,
-    unit,
-    currency: code,
-    display: `${unit}${formatAmount(number)}`,
-    convertedDisplay:
-      code === "USD" && Number.isFinite(rate) && rate > 0
-        ? `≈¥${formatAmount(number * rate)}`
-        : "",
-  };
-}
-
-async function fetchDeepSeek(key, settings) {
-  const json = await requestJSON("https://api.deepseek.com/user/balance", key);
-  return parseDeepSeekBalance(json, settings.usdToCnyRate);
-}
-
-function parseDeepSeekBalance(json, usdToCnyRate = 0) {
-  const balances = json.balance_infos || [];
-  const item =
-    balances.find((value) => value.currency === "CNY") || balances[0];
-  if (!item) throw new Error("响应中没有余额");
-  return {
-    ...money(item.total_balance, item.currency, usdToCnyRate),
-    detail:
-      `充值 ${money(item.topped_up_balance, item.currency, usdToCnyRate).display}`,
-    secondaryDetail:
-      `赠送 ${money(item.granted_balance, item.currency, usdToCnyRate).display}`,
-  };
-}
-
-async function fetchStepFun(key) {
-  const json = await requestJSON("https://api.stepfun.com/v1/accounts", key);
-  return parseStepFunBalance(json);
-}
-
-function parseStepFunBalance(json) {
-  const account = json.data || json;
-  const result = money(account.balance, account.currency || "CNY");
-  return {
-    ...result,
-    detail: `充值 ${money(account.total_cash_balance, "CNY").display}`,
-    secondaryDetail:
-      `赠送 ${money(account.total_voucher_balance, "CNY").display}`,
-  };
-}
-
-async function fetchKimi(key, settings) {
-  const host =
-    settings.kimiRegion === "international"
-      ? "https://api.moonshot.ai"
-      : "https://api.moonshot.cn";
-  const json = await requestJSON(
-    `${host}/v1/users/me/balance`,
-    key
-  );
-  return parseKimiBalance(
-    json,
-    settings.kimiRegion === "international" ? "USD" : "CNY",
-    settings.usdToCnyRate
-  );
-}
-
-function parseKimiBalance(json, currency, usdToCnyRate = 0) {
-  if (json.status === false) throw new Error(json.message || "查询失败");
-  const data = json.data || {};
-  return {
-    ...money(data.available_balance, currency, usdToCnyRate),
-    detail:
-      `现金 ${money(data.cash_balance, currency, usdToCnyRate).display}`,
-    secondaryDetail:
-      `代金券 ${money(data.voucher_balance, currency, usdToCnyRate).display}`,
-  };
-}
-
-function decodeJwtPayload(token) {
-  try {
-    const part = String(token || "").split(".")[1];
-    if (!part) return {};
-    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
-    return JSON.parse(Data.fromBase64String(padded).toRawString());
-  } catch (_) {
-    return {};
-  }
-}
-
-function codexAccountId(token, settings) {
-  if (settings.codexAccountId) return settings.codexAccountId;
-  const payload = decodeJwtPayload(token);
-  const auth = payload["https://api.openai.com/auth"] || {};
-  return (
-    auth.chatgpt_account_id ||
-    payload.chatgpt_account_id ||
-    payload.account_id ||
-    ""
-  );
-}
-
-function remainingPercent(window) {
-  const used = Number(window?.used_percent);
-  if (!Number.isFinite(used)) return null;
-  return Math.max(0, Math.min(100, Math.round(100 - used)));
-}
-
-function codexResetDate(window) {
-  const raw = window?.reset_at ?? window?.resetAt ?? window?.reset_time;
-  if (raw !== undefined && raw !== null && raw !== "") {
-    const numeric = Number(raw);
-    const date = Number.isFinite(numeric)
-      ? new Date(numeric < 1e12 ? numeric * 1000 : numeric)
-      : new Date(raw);
-    if (!Number.isNaN(date.getTime())) return date;
-  }
-  const seconds = Number(window?.reset_after_seconds);
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return new Date(Date.now() + seconds * 1000);
-  }
-  return null;
-}
-
-function formatCodexResetDate(window) {
-  const date = codexResetDate(window);
-  if (!date) return "";
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getMonth() + 1}/${date.getDate()} ${pad(
-    date.getHours()
-  )}:${pad(date.getMinutes())}`;
-}
-
-async function fetchCodex(key, settings) {
-  const accountId = codexAccountId(key, settings);
-  const headers = accountId ? { "ChatGPT-Account-Id": accountId } : {};
-  const json = await requestJSON(
-    "https://chatgpt.com/backend-api/wham/usage",
-    key,
-    headers
-  );
-  return parseCodexQuota(json);
-}
-
-function parseCodexQuota(json) {
-  const limits = json.rate_limit || json.rate_limits || json;
-  const primary = limits.primary_window || limits.primary;
-  const secondary = limits.secondary_window || limits.secondary;
-  const windows = [primary, secondary].filter(Boolean);
-  const minutes = (window) => {
-    const explicit = Number(
-      window?.window_minutes ??
-        window?.windowMinutes ??
-        window?.duration_minutes
-    );
-    if (Number.isFinite(explicit) && explicit > 0) return explicit;
-    const resetAfter = Number(window?.reset_after_seconds);
-    return Number.isFinite(resetAfter) && resetAfter > 0
-      ? resetAfter / 60
-      : null;
-  };
-  let fiveHour = windows.find((window) => {
-    const value = minutes(window);
-    return Number.isFinite(value) && value > 0 && value <= 360;
-  });
-  let weekly = windows.find((window) => {
-    const value = minutes(window);
-    return Number.isFinite(value) && value >= 1000;
-  });
-
-  const unknown = windows.filter((window) => {
-    const value = minutes(window);
-    return !Number.isFinite(value) || value <= 0;
-  });
-
-  // 兼容旧响应或部分字段缺失：已识别一个窗口后，将另一个未知窗口
-  // 按接口的 primary/secondary 顺序补为另一种额度窗口。
-  if (!fiveHour && weekly && unknown.length) fiveHour = unknown[0];
-  if (!weekly && fiveHour && unknown.length) weekly = unknown[0];
-  if (!fiveHour && !weekly) {
-    fiveHour = primary || windows[0];
-    weekly = secondary && secondary !== fiveHour ? secondary : null;
-  }
-
-  const fiveHourRemaining = remainingPercent(fiveHour);
-  const weeklyRemaining = remainingPercent(weekly);
-  const mainRemaining =
-    fiveHourRemaining !== null ? fiveHourRemaining : weeklyRemaining;
-  if (mainRemaining === null) {
-    throw new Error("Codex 额度响应格式已变化");
-  }
-  const detail = fiveHourRemaining !== null ? "5小时剩余" : "周剩余";
-  const resetWindow = weekly || fiveHour;
-  const resetText = formatCodexResetDate(resetWindow);
-  return {
-    value: mainRemaining,
-    unit: "%",
-    display: `${mainRemaining}%`,
-    detail,
-    secondaryDetail:
-      mainRemaining === 0 && resetText
-        ? `下次重置 ${resetText}`
-        : weeklyRemaining === null
-          ? ""
-          : `周剩余 ${weeklyRemaining}%`,
-    progress: mainRemaining / 100,
-  };
-}
-
-async function fetchSerpBase(_, settings) {
-  const credits = Number(settings.serpBaseCredits || 0);
-  return {
-    value: credits,
-    unit: "次",
-    display: `${Math.max(0, credits).toLocaleString()}`,
-    detail: "手动额度",
-    manual: true,
-  };
-}
-
 function orderedProviders(settings) {
   const byId = Object.fromEntries(
     PROVIDERS.map((provider) => [provider.id, provider])
@@ -536,116 +230,45 @@ function orderedProviders(settings) {
     .filter(Boolean);
 }
 
-function isLowBalance(item, settings) {
-  if (item.status !== "ok" && item.status !== "cached") return false;
-  if (item.unit === "%") return item.value <= settings.lowQuotaThreshold;
-  if (item.unit === "次") return item.value <= settings.lowCreditsThreshold;
-  return item.value <= settings.lowMoneyThreshold;
-}
-
-function changeText(delta, unit) {
-  if (!Number.isFinite(delta) || Math.abs(delta) < 0.005) return "";
-  const arrow = delta > 0 ? "↑" : "↓";
-  const amount = Math.abs(delta);
-  const value =
-    unit === "%" || unit === "次"
-      ? Math.round(amount)
-      : amount.toFixed(amount >= 10 ? 0 : 2);
-  if (unit === "%") return `${arrow}${value}%`;
-  if (unit === "次") return `${arrow}${value}`;
-  return `${arrow}${unit}${value}`;
-}
-
-function historicalValue(entries, targetAt, maxLag = Infinity) {
-  const candidates = (entries || [])
-    .filter(
-      (entry) =>
-        Number.isFinite(Number(entry.at)) &&
-        Number.isFinite(Number(entry.value)) &&
-        Number(entry.at) <= targetAt
-    )
-    .sort((left, right) => Number(right.at) - Number(left.at));
-  if (!candidates.length) return null;
-  const candidate = candidates[0];
-  return targetAt - Number(candidate.at) <= maxLag
-    ? Number(candidate.value)
-    : null;
-}
-
-function applyHistory(results, history, now) {
-  const dayMs = 24 * 60 * 60 * 1000;
-  const cutoff = now - 8 * dayMs;
-  for (const id of Object.keys(history)) {
-    history[id] = (Array.isArray(history[id]) ? history[id] : []).filter(
-      (entry) => Number(entry.at) >= cutoff
-    );
-  }
-
-  for (const item of results) {
-    if (item.status !== "ok") continue;
-    const entries = Array.isArray(history[item.id]) ? history[item.id] : [];
-    const dailyValue = historicalValue(entries, now - dayMs, dayMs / 2);
-    const weeklyValue = historicalValue(entries, now - 7 * dayMs, dayMs);
-    const daily =
-      dailyValue === null ? "" : changeText(item.value - dailyValue, item.unit);
-    const weekly =
-      weeklyValue === null
-        ? ""
-        : changeText(item.value - weeklyValue, item.unit);
-    item.periodDetail = [
-      daily ? `日 ${daily}` : "",
-      weekly ? `周 ${weekly}` : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-
-    const recent = entries[entries.length - 1];
-    const shouldAppend = !recent || now - Number(recent.at) >= 15 * 60 * 1000;
-    const retained = [...entries];
-    if (shouldAppend) {
-      retained.push({ at: now, value: item.value, unit: item.unit });
-    }
-    history[item.id] = retained;
-  }
-
-  return history;
-}
-
 async function loadBalances(settings) {
   const cache = readCache();
   const history = readHistory();
   const now = Date.now();
   const results = await Promise.all(
     orderedProviders(settings).map(async (provider) => {
-      const key = provider.manual ? "" : getSecret(provider.id);
-      if (!provider.manual && !key) {
-        return { ...provider, status: "unset", display: "未配置", detail: "点击脚本配置" };
+      const credential = provider.manual ? "" : getSecret(provider.id);
+      if (!provider.manual && !credential) {
+        return Core.createUnconfiguredResult(provider, now);
       }
       try {
-        const balance = await provider.fetch(key, settings);
-        const item = { ...provider, ...balance, status: "ok", updatedAt: now };
+        const item = await ProviderAdapters.fetchProvider(provider, {
+          credential,
+          settings,
+          now,
+          requestJSON,
+        });
         const oldValue = Number(cache[provider.id]?.value);
         if (Number.isFinite(oldValue)) {
           item.delta = item.value - oldValue;
-          item.change = changeText(item.delta, item.unit);
+          item.change = Core.changeText(item.delta, item.unit);
         }
-        item.isLow = isLowBalance(item, settings);
+        item.isLow = Core.isLowBalance(item, settings);
         cache[provider.id] = item;
         return item;
       } catch (error) {
-        const item = resolveProviderFailure(
+        const item = Core.resolveProviderFailure(
           provider,
           cache[provider.id],
           now,
           settings.cacheHours,
           error
         );
-        item.isLow = isLowBalance(item, settings);
+        item.isLow = Core.isLowBalance(item, settings);
         return item;
       }
     })
   );
-  applyHistory(results, history, now);
+  Core.applyHistory(results, history, now);
   writeCache(cache);
   writeHistory(history);
   return results;
@@ -727,7 +350,8 @@ function addProviderRow(parent, item, palette, logos, compact = false) {
   const color = item.isLow
     ? palette.red
     :
-    item.status === "error" || item.status === "unset"
+    item.status === PROVIDER_STATUSES.ERROR ||
+    item.status === PROVIDER_STATUSES.UNCONFIGURED
       ? palette.muted
       : palette.white;
   addText(row, item.display, compact ? 14 : 17, color, "bold");
@@ -754,7 +378,8 @@ function addBalanceCard(parent, item, palette, logos) {
   const valueColor = item.isLow
     ? palette.red
     :
-    item.status === "error" || item.status === "unset"
+    item.status === PROVIDER_STATUSES.ERROR ||
+    item.status === PROVIDER_STATUSES.UNCONFIGURED
       ? palette.muted
       : palette.white;
   addText(card, item.display, 24, valueColor, "bold");
@@ -801,7 +426,9 @@ function createWidget(items, settings, logos, familyOverride = null) {
 
   const family = familyOverride || config.widgetFamily || "medium";
   if (family === "small") {
-    const configured = items.filter((item) => item.status !== "unset");
+    const configured = items.filter(
+      (item) => item.status !== PROVIDER_STATUSES.UNCONFIGURED
+    );
     for (const item of configured.slice(0, 3)) {
       addProviderRow(widget, item, palette, logos, true);
       widget.addSpacer(7);
@@ -839,7 +466,11 @@ function createWidget(items, settings, logos, familyOverride = null) {
 
   widget.addSpacer();
   const lastSuccess = items.reduce(
-    (latest, item) => Math.max(latest, Number(item.updatedAt || 0)),
+    (latest, item) =>
+      Math.max(
+        latest,
+        Number(item.successfulFetchedAt || item.updatedAt || 0)
+      ),
     0
   );
   const updated = lastSuccess ? new Date(lastSuccess) : new Date();
@@ -966,8 +597,7 @@ function formatAge(timestamp) {
   return hours < 48 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`;
 }
 
-async function presentDiagnostics(settings) {
-  const cache = readCache();
+function diagnosticReport(settings, cache) {
   const visible = orderedProviders(settings);
   const lines = [
     `${APP.name} v${APP.version}`,
@@ -978,12 +608,17 @@ async function presentDiagnostics(settings) {
     "",
     ...visible.map((provider) => {
       const item = cache[provider.id];
-      return `${provider.name}：${item ? formatAge(item.updatedAt) : "无缓存"}`;
+      const fetchedAt = item?.successfulFetchedAt || item?.updatedAt;
+      return `${provider.name}：${item ? formatAge(fetchedAt) : "无缓存"}`;
     }),
     "",
     "诊断报告不包含 API Key、Access Token 或 Account ID。",
   ];
-  const report = lines.join("\n");
+  return lines.join("\n");
+}
+
+async function presentDiagnostics(settings) {
+  const report = diagnosticReport(settings, readCache());
   const alert = new Alert();
   alert.title = "诊断信息";
   alert.message = report;
@@ -1006,7 +641,8 @@ function settingsPageHTML(settings) {
   }));
   const initial = JSON.stringify({
     version: APP.version,
-    settings,
+    settings: { ...settings, codexAccountId: "" },
+    codexAccountIdConfigured: Boolean(settings.codexAccountId),
     defaults: CONFIG,
     providers,
   }).replace(/</g, "\\u003c");
@@ -1068,9 +704,9 @@ const toast=text=>{const el=$("toast");el.textContent=text;el.classList.add("sho
 const accounts=$("accounts");
 initial.providers.filter(p=>!p.manual).forEach(p=>{const wrapper=document.createElement("div");const row=document.createElement("div");row.className="row key-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">'+(p.configured?'已配置':'未配置')+'</span></span><span class="chevron">›</span>';const editor=document.createElement("div");editor.className="secret-editor";editor.innerHTML='<input id="secret-'+p.id+'" type="password" placeholder="输入新密钥">'+(p.configured?'<button class="action danger">清除</button>':'');row.onclick=()=>editor.classList.toggle("open");const clear=editor.querySelector("button");if(clear)clear.onclick=e=>{e.stopPropagation();state.clearSecrets[p.id]=true;row.querySelector(".hint").textContent="关闭后清除";editor.classList.remove("open");toast("已标记清除")};wrapper.appendChild(row);wrapper.appendChild(editor);accounts.appendChild(wrapper)});
 const accountDetails=$("accountDetails");
-accountDetails.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon yellow">SB</span><span class="label"><strong>SerpBase MCP</strong><span class="hint">手动维护剩余额度</span></span><input id="manual-serpbase" type="number" min="0" step="1"></label><label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex ID</strong><span class="hint">通常从 Token 自动识别</span></span><input id="codexAccountId" type="text" placeholder="自动"></label>');
+accountDetails.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon yellow">SB</span><span class="label"><strong>SerpBase MCP</strong><span class="hint">手动维护剩余额度</span></span><input id="manual-serpbase" type="number" min="0" step="1"></label><label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex ID</strong><span class="hint">'+(initial.codexAccountIdConfigured?'已配置；留空保持':'通常从 Token 自动识别')+'</span></span><input id="codexAccountId" type="text" placeholder="'+(initial.codexAccountIdConfigured?'输入新 ID':'自动')+'"></label>');
 setValue("manual-serpbase",initial.settings.serpBaseCredits);
-setValue("codexAccountId",initial.settings.codexAccountId||"");
+setValue("codexAccountId","");
 const providerBox=$("providers");let order=[...initial.settings.providerOrder];const hidden=new Set(initial.settings.hiddenProviders);
 function drawProviders(){providerBox.innerHTML="";order.forEach((id,index)=>{const p=initial.providers.find(x=>x.id===id);const row=document.createElement("div");row.className="row order-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong></span><label class="switch"><input type="checkbox" '+(!hidden.has(id)?"checked":"")+'><span class="slider"></span></label><span class="order-buttons"><button data-d="-1">↑</button><button data-d="1">↓</button></span>';row.querySelector("input").onchange=e=>e.target.checked?hidden.delete(id):hidden.add(id);row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const next=index+Number(b.dataset.d);if(next<0||next>=order.length)return;[order[index],order[next]]=[order[next],order[index]];drawProviders()});providerBox.appendChild(row)})}drawProviders();
 $("refreshLogos").onclick=()=>{state.refreshLogos=true;toast("关闭后刷新图标")};$("legacyMenu").onclick=()=>{state.legacyMenu=true;toast("关闭后打开经典菜单")};$("resetUI").onclick=()=>{state.resetUI=confirm("恢复默认 UI 设置？密钥和额度不会被删除。");if(state.resetUI)toast("关闭后恢复默认")};
@@ -1127,7 +763,8 @@ function applyWebSettings(settings, payload) {
       0,
       Number(next.serpBaseCredits) || 0
     );
-    settings.codexAccountId = String(next.codexAccountId || "").trim();
+    const nextCodexAccountId = String(next.codexAccountId || "").trim();
+    if (nextCodexAccountId) settings.codexAccountId = nextCodexAccountId;
     const ids = PROVIDERS.map((provider) => provider.id);
     const order = Array.isArray(next.providerOrder)
       ? [...new Set(next.providerOrder.filter((id) => ids.includes(id)))]

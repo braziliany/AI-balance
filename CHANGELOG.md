@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2.1.0 · 待发布
+
+- 引入 Provider Adapter 架构，集中管理五个数据源的请求、解析与兼容逻辑。
+- 建立统一 Provider Result Schema，Renderer 不再接触远程 API 私有字段。
+- 抽离跨 Scriptable 与 Node.js 共用的 Core 纯函数，降低主脚本职责并改善可测试性。
+- 区分组件渲染时间、最近成功获取时间与缓存回退时间，同时兼容 v2.0 `updatedAt` 缓存。
+- 增加 Provider contract、Codex 字段变体、缓存 fallback、旧缓存和历史兼容测试。
+- 安装器与 manifest 增加 Core 和 Provider Adapters 模块；用户设置与 Keychain 无需迁移。
+- Codex Account ID 不再注入 WebView HTML，只传递是否已配置状态。
+
 ## 2.0.5 · 2026-08-11
 
 - Codex 额度为 0 时，周额度副信息显示下次重置日期和时间。

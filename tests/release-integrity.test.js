@@ -14,6 +14,8 @@ const manifest = JSON.parse(read("manifest.json"));
 const packageJson = JSON.parse(read("package.json"));
 const packageLock = JSON.parse(read("package-lock.json"));
 const widgetSource = read("AI-Balance.js");
+const coreSource = read("AI-Balance-Core.js");
+const providersSource = read("AI-Balance-Providers.js");
 const installerSource = read("Installer.js");
 
 const versions = {
@@ -42,8 +44,23 @@ for (const resource of manifest.resources) {
   );
 }
 
+assert.deepEqual(
+  manifest.resources.map((resource) => resource.scriptName),
+  [
+    "LPL-Design-System",
+    "AI-Balance-Core",
+    "AI-Balance-Providers",
+    "AI-Balance",
+    "AI Balance Installer",
+  ]
+);
+assert.match(widgetSource, /importModule\("AI-Balance-Core"\)/);
+assert.match(widgetSource, /importModule\("AI-Balance-Providers"\)/);
+assert.match(coreSource, /module\.exports/);
+assert.match(providersSource, /module\.exports/);
+
 const logoReferences = Array.from(
-  widgetSource.matchAll(/assets\/logos\/([a-z0-9.-]+)/g),
+  providersSource.matchAll(/assets\/logos\/([a-z0-9.-]+)/g),
   (match) => match[1]
 );
 assert.deepEqual(

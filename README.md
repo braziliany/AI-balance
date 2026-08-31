@@ -18,7 +18,7 @@
 
 1. 首次只需将仓库中的 `Installer.js` 复制到 Scriptable。
 2. 把脚本命名为 `AI Balance Installer` 并运行。
-3. 安装器会自动下载 `AI-Balance`、`LPL-Design-System` 和最新版安装器。
+3. 安装器会自动下载 `AI-Balance`、Core、Provider Adapters、`LPL-Design-System` 和最新版安装器。
 4. 以后运行 `AI Balance Installer` 即可检查更新或重新安装。
 5. 运行 `AI-Balance`，按菜单填入各平台密钥、Codex Access Token 和 SerpBase 剩余额度。
 6. 在桌面添加 Scriptable 中号组件并选择 `AI-Balance`。
@@ -27,7 +27,7 @@
 
 ### 手动安装
 
-也可以将 `AI-Balance.js` 和 `LPL-Design-System.js` 一起复制到 Scriptable 的 iCloud Drive 目录。
+也可以将 `AI-Balance.js`、`AI-Balance-Core.js`、`AI-Balance-Providers.js` 和 `LPL-Design-System.js` 一起复制到 Scriptable 的 iCloud Drive 目录。
 
 密钥通过 Scriptable `Keychain` 保存，不会写入脚本或设置 JSON。
 
@@ -71,3 +71,25 @@ Codex 主值显示 5 小时窗口剩余百分比；如果接口同时返回周�
 - StepFun：`GET https://api.stepfun.com/v1/accounts`
 - Codex：Codex 客户端额度接口（非公开稳定 API，接口变化时会回退缓存）
 - Kimi：`GET https://api.moonshot.cn/v1/users/me/balance`
+
+## Architecture
+
+v2.1 架构将 Provider 私有响应字段限制在 Adapter 层，Widget Renderer 只消费统一结果：
+
+```text
+Provider API / Manual Data
+        ↓
+Provider Adapter
+        ↓
+Normalized Provider Result
+        ↓
+Cache / History / ViewModel
+        ↓
+Widget Renderer
+```
+
+- `AI-Balance-Providers.js` 集中 Provider registry、请求解释和兼容逻辑。
+- `AI-Balance-Core.js` 提供跨 Scriptable/Node.js 共用的标准化、额度窗口、缓存、历史和数值纯函数。
+- `AI-Balance.js` 保留 Scriptable 生命周期、Keychain/本地文件桥接、设置界面和 Widget Renderer。
+
+现有 Keychain key、设置 JSON、余额缓存、历史和图标缓存保持兼容，升级不要求重新输入凭据。Codex 额度仍属于实验性支持，接口变化时会使用有效期内的本地缓存。
