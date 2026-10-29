@@ -1,0 +1,16 @@
+
+> ai-balance-scriptable@2.3.0 test
+> node tests/scriptable-runtime.test.js && node tests/installer.test.js && node tests/installer-atomic.test.js && node tests/widget-core.test.js && node tests/provider-contract.test.js && node tests/provider-fetch.test.js && node tests/codex-provider.test.js && node tests/muteki-provider.test.js && node tests/cache-history.test.js && node tests/release-integrity.test.js && node tests/standalone.test.js && node tests/installer-singlefile.test.js
+
+scriptable runtime compatibility: ok
+installer: ok
+installer atomic rollback: ok
+widget core: ok
+provider contract: ok
+provider fetch: ok
+codex provider: ok
+muteki provider: ok
+cache and history: ok
+release integrity: ok
+standalone: syntax, isolation, initialization, provider parity, data compatibility, six render trees, offline fallback, full widget lifecycle: ok
+single-file installer: success, safe manifest fallback, download/marker failure, partial write rollback, new-file cleanup, readback rollback, cancellation, shared files preserved: ok

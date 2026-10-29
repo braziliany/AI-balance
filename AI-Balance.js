@@ -6,14 +6,13 @@
  * AI Balance Widget
  * DeepSeek / Codex / Muteki 余额与额度概览
  *
- * 依赖：AI-Balance-Core.js、AI-Balance-Providers.js、LPL-Design-System.js
- * （均与本脚本放在 Scriptable 同一目录）
+ * AI Balance Standalone v2.3.0 — 所有运行代码内置，无需本地模块。
  * 首次在 Scriptable App 内运行会打开配置菜单，密钥保存于 iOS Keychain。
  */
 
 const APP = {
   name: "AI Balance",
-  version: "2.2.0",
+  version: "2.3.0",
   settingsVersion: 9,
   keychainPrefix: "ai-balance.",
   cacheFile: "ai-balance-cache.json",
@@ -21,18 +20,688 @@ const APP = {
   logoCacheDirectory: "ai-balance-logos",
 };
 
-let DesignSystem;
-let Core;
-let ProviderAdapters;
-try {
-  DesignSystem = importModule("LPL-Design-System");
-  Core = importModule("AI-Balance-Core");
-  ProviderAdapters = importModule("AI-Balance-Providers");
-} catch (error) {
-  throw new Error(
-    "缺少 AI Balance 依赖模块。请重新运行安装器安装全部脚本。"
+const Core = (() => {
+/**
+ * AI Balance Core
+ * Cross-runtime pure functions shared by Scriptable and Node.js tests.
+ */
+
+const PROVIDER_STATUSES = Object.freeze({
+  OK: "ok",
+  CACHED: "cached",
+  ERROR: "error",
+  UNCONFIGURED: "unconfigured",
+});
+
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function formatAmount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  const digits = Math.abs(number) >= 100 ? 0 : 2;
+  try {
+    return number.toLocaleString("zh-CN", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+  } catch (_) {
+    return number.toFixed(digits);
+  }
+}
+
+function money(value, currency, usdToCnyRate = 0) {
+  const number = finiteNumber(value);
+  const code = String(currency || "CNY").toUpperCase();
+  const unit = code === "USD" ? "$" : "¥";
+  const rate = Number(usdToCnyRate);
+  return {
+    value: number,
+    unit,
+    currency: code,
+    display: `${unit}${formatAmount(number)}`,
+    convertedDisplay:
+      code === "USD" && Number.isFinite(rate) && rate > 0
+        ? `≈¥${formatAmount(number * rate)}`
+        : "",
+  };
+}
+
+function remainingPercent(window) {
+  const used = Number(window?.used_percent);
+  if (!Number.isFinite(used)) return null;
+  return Math.max(0, Math.min(100, Math.round(100 - used)));
+}
+
+function codexWindowMinutes(window) {
+  const explicit = Number(
+    window?.window_minutes ??
+      window?.windowMinutes ??
+      window?.duration_minutes
+  );
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const resetAfter = Number(window?.reset_after_seconds);
+  return Number.isFinite(resetAfter) && resetAfter > 0
+    ? resetAfter / 60
+    : null;
+}
+
+function classifyCodexWindows(json) {
+  const limits = json?.rate_limit || json?.rate_limits || json || {};
+  const primary = limits.primary_window || limits.primary;
+  const secondary = limits.secondary_window || limits.secondary;
+  const windows = [primary, secondary].filter(Boolean);
+
+  let shortWindow = windows.find((window) => {
+    const value = codexWindowMinutes(window);
+    return Number.isFinite(value) && value > 0 && value <= 360;
+  });
+  let weeklyWindow = windows.find((window) => {
+    const value = codexWindowMinutes(window);
+    return Number.isFinite(value) && value >= 1000;
+  });
+  const unknown = windows.filter((window) => {
+    const value = codexWindowMinutes(window);
+    return !Number.isFinite(value) || value <= 0;
+  });
+
+  if (!shortWindow && weeklyWindow && unknown.length) shortWindow = unknown[0];
+  if (!weeklyWindow && shortWindow && unknown.length) weeklyWindow = unknown[0];
+  if (!shortWindow && !weeklyWindow) {
+    shortWindow = primary || windows[0] || null;
+    weeklyWindow = secondary && secondary !== shortWindow ? secondary : null;
+  }
+  return { shortWindow, weeklyWindow };
+}
+
+function codexResetAt(window, now = Date.now()) {
+  const raw = window?.reset_at ?? window?.resetAt ?? window?.reset_time;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const numeric = Number(raw);
+    const date = Number.isFinite(numeric)
+      ? new Date(numeric < 1e12 ? numeric * 1000 : numeric)
+      : new Date(raw);
+    if (!Number.isNaN(date.getTime())) return date.getTime();
+  }
+  const seconds = Number(window?.reset_after_seconds);
+  return Number.isFinite(seconds) && seconds > 0
+    ? now + seconds * 1000
+    : null;
+}
+
+function formatResetAt(timestamp) {
+  if (timestamp === null || timestamp === undefined || timestamp === "") {
+    return "";
+  }
+  const date = new Date(Number(timestamp));
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getMonth() + 1}/${date.getDate()} ${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
+}
+
+function emptyQuota(value = {}) {
+  return {
+    shortWindowRemainingPercent:
+      value.shortWindowRemainingPercent ?? null,
+    shortWindowResetAt: value.shortWindowResetAt ?? null,
+    weeklyRemainingPercent: value.weeklyRemainingPercent ?? null,
+    weeklyResetAt: value.weeklyResetAt ?? null,
+  };
+}
+
+function normalizeProviderResult(provider, value = {}, context = {}) {
+  const status = value.status || context.status || PROVIDER_STATUSES.OK;
+  const successfulFetchedAt = finiteNumber(
+    value.successfulFetchedAt ?? value.updatedAt ?? context.successfulFetchedAt,
+    0
+  );
+  const renderedAt = finiteNumber(
+    value.renderedAt ?? context.renderedAt,
+    successfulFetchedAt
+  );
+  const cachedAtRaw = value.cachedAt ?? context.cachedAt;
+  const cachedAt =
+    cachedAtRaw === null || cachedAtRaw === undefined
+      ? null
+      : finiteNumber(cachedAtRaw, null);
+  const numericValue = Number(value.value);
+  const resetAtRaw = value.resetAt ?? null;
+  return {
+    id: String(provider.id),
+    name: String(provider.name),
+    shortName: String(provider.shortName || ""),
+    color: String(provider.color || "yellow"),
+    logoUrl: String(provider.logoUrl || ""),
+    keyLabel: String(provider.keyLabel || ""),
+    dashboardUrl: String(provider.dashboardUrl || ""),
+    status,
+    value: Number.isFinite(numericValue) ? numericValue : 0,
+    unit: String(value.unit || ""),
+    currency: String(value.currency || ""),
+    display: String(value.display ?? "--"),
+    detail: String(value.detail || ""),
+    secondaryDetail: String(value.secondaryDetail || ""),
+    convertedDisplay: String(value.convertedDisplay || ""),
+    renderedAt,
+    successfulFetchedAt,
+    cachedAt,
+    // Kept as a compatibility alias for v2.0 cache and UI consumers.
+    updatedAt: successfulFetchedAt,
+    resetAt:
+      resetAtRaw === null || resetAtRaw === undefined
+        ? null
+        : finiteNumber(resetAtRaw, null),
+    quota: emptyQuota(value.quota),
+    delta: Number.isFinite(Number(value.delta)) ? Number(value.delta) : null,
+    change: String(value.change || ""),
+    periodDetail: String(value.periodDetail || ""),
+    isLow: Boolean(value.isLow),
+    meta:
+      value.meta && typeof value.meta === "object" && !Array.isArray(value.meta)
+        ? { ...value.meta }
+        : {},
+  };
+}
+
+function createUnconfiguredResult(provider, now = Date.now()) {
+  return normalizeProviderResult(
+    provider,
+    {
+      status: PROVIDER_STATUSES.UNCONFIGURED,
+      display: "未配置",
+      detail: "点击脚本配置",
+    },
+    { renderedAt: now }
   );
 }
+
+function safeErrorMessage(error) {
+  return String(error?.message || error || "请求失败").slice(0, 24);
+}
+
+function resolveProviderFailure(provider, cached, now, cacheHours, error) {
+  const cachedResult = cached
+    ? normalizeProviderResult(provider, cached, { renderedAt: now })
+    : null;
+  const fetchedAt = Number(cachedResult?.successfulFetchedAt || 0);
+  const isFresh =
+    fetchedAt > 0 && now - fetchedAt < Number(cacheHours) * 3600000;
+  if (isFresh) {
+    return normalizeProviderResult(
+      provider,
+      {
+        ...cachedResult,
+        status: PROVIDER_STATUSES.CACHED,
+        detail: "缓存数据",
+        cachedAt: now,
+      },
+      { renderedAt: now }
+    );
+  }
+  return normalizeProviderResult(
+    provider,
+    {
+      status: PROVIDER_STATUSES.ERROR,
+      display: "异常",
+      detail: safeErrorMessage(error),
+    },
+    { renderedAt: now }
+  );
+}
+
+function isLowBalance(item, settings) {
+  if (
+    ![
+      PROVIDER_STATUSES.OK,
+      PROVIDER_STATUSES.CACHED,
+    ].includes(item.status)
+  ) {
+    return false;
+  }
+  if (item.unit === "%") return item.value <= settings.lowQuotaThreshold;
+  if (item.currency === "USD" || item.unit === "$") {
+    return item.value <= settings.lowUsdThreshold;
+  }
+  return item.value <= settings.lowCnyThreshold;
+}
+
+function changeText(delta, unit) {
+  if (!Number.isFinite(delta) || Math.abs(delta) < 0.005) return "";
+  const arrow = delta > 0 ? "↑" : "↓";
+  const amount = Math.abs(delta);
+  const value =
+    unit === "%" || unit === "次"
+      ? Math.round(amount)
+      : amount.toFixed(amount >= 10 ? 0 : 2);
+  if (unit === "%") return `${arrow}${value}%`;
+  if (unit === "次") return `${arrow}${value}`;
+  return `${arrow}${unit}${value}`;
+}
+
+function historicalValue(entries, targetAt, maxLag = Infinity) {
+  const candidates = (entries || [])
+    .filter(
+      (entry) =>
+        Number.isFinite(Number(entry.at)) &&
+        Number.isFinite(Number(entry.value)) &&
+        Number(entry.at) <= targetAt
+    )
+    .sort((left, right) => Number(right.at) - Number(left.at));
+  if (!candidates.length) return null;
+  const candidate = candidates[0];
+  return targetAt - Number(candidate.at) <= maxLag
+    ? Number(candidate.value)
+    : null;
+}
+
+function applyHistory(results, history, now) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const cutoff = now - 8 * dayMs;
+  for (const id of Object.keys(history)) {
+    history[id] = (Array.isArray(history[id]) ? history[id] : []).filter(
+      (entry) => Number(entry.at) >= cutoff
+    );
+  }
+
+  for (const item of results) {
+    if (
+      item.status !== PROVIDER_STATUSES.OK
+    ) {
+      continue;
+    }
+    const entries = Array.isArray(history[item.id]) ? history[item.id] : [];
+    const dailyValue = historicalValue(entries, now - dayMs, dayMs / 2);
+    const weeklyValue = historicalValue(entries, now - 7 * dayMs, dayMs);
+    const daily =
+      dailyValue === null ? "" : changeText(item.value - dailyValue, item.unit);
+    const weekly =
+      weeklyValue === null
+        ? ""
+        : changeText(item.value - weeklyValue, item.unit);
+    item.periodDetail = [
+      daily ? `日 ${daily}` : "",
+      weekly ? `周 ${weekly}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    const recent = entries[entries.length - 1];
+    const shouldAppend = !recent || now - Number(recent.at) >= 15 * 60 * 1000;
+    const retained = [...entries];
+    if (shouldAppend) {
+      retained.push({ at: now, value: item.value, unit: item.unit });
+    }
+    history[item.id] = retained;
+  }
+  return history;
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const part = String(token || "").split(".")[1];
+    if (!part) return {};
+    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    if (typeof Data === "undefined") return {};
+    const text = Data.fromBase64String(padded).toRawString();
+    return JSON.parse(text);
+  } catch (_) {
+    return {};
+  }
+}
+
+return {
+  PROVIDER_STATUSES,
+  applyHistory,
+  changeText,
+  classifyCodexWindows,
+  codexResetAt,
+  codexWindowMinutes,
+  createUnconfiguredResult,
+  decodeJwtPayload,
+  formatAmount,
+  formatResetAt,
+  historicalValue,
+  isLowBalance,
+  money,
+  normalizeProviderResult,
+  remainingPercent,
+  resolveProviderFailure,
+};
+
+})();
+
+const DesignSystem = (() => {
+/**
+ * LPL Scriptable Design System
+ * 可供其他 Scriptable 项目通过 模块接口 复用。
+ */
+
+const version = "2.2.0";
+
+const palettes = {
+  dark: {
+    backgroundTop: "#292A58",
+    backgroundBottom: "#171832",
+    yellow: "#FFD34E",
+    orange: "#FF7043",
+    red: "#FF4D67",
+    white: "#F7F7FB",
+    secondary: "#AAAAC1",
+    muted: "#85869F",
+    divider: "#FFFFFF",
+  },
+  light: {
+    backgroundTop: "#F5F6FF",
+    backgroundBottom: "#E2E5F4",
+    yellow: "#C89000",
+    orange: "#DF5832",
+    red: "#D93650",
+    white: "#20213C",
+    secondary: "#55576F",
+    muted: "#77798F",
+    divider: "#20213C",
+  },
+};
+
+const typography = {
+  header: 16,
+  date: 15,
+  team: 19,
+  teamCompact: 17,
+  teamSmall: 16,
+  versus: 16,
+  versusCompact: 14,
+  subtitle: 13,
+  subtitleCompact: 11,
+  value: 28,
+  valueCompact: 22,
+  valueSmall: 28,
+};
+
+const layout = {
+  headerSquare: 16,
+  headerGap: 10,
+  logo: 22,
+  logoCompact: 20,
+  logoSmall: 22,
+  valueWidth: 112,
+  valueWidthCompact: 96,
+};
+
+function normalizeThemeMode(mode, fallback = "dark") {
+  const value = String(mode || "").toLowerCase();
+  return ["auto", "dark", "light"].includes(value) ? value : fallback;
+}
+
+function resolveThemeMode(mode, isDarkAppearance = true) {
+  const normalized = normalizeThemeMode(mode);
+  if (normalized !== "auto") return normalized;
+  return isDarkAppearance ? "dark" : "light";
+}
+
+function resolvePalette(mode, isDarkAppearance = true) {
+  return {
+    ...palettes[resolveThemeMode(mode, isDarkAppearance)],
+  };
+}
+
+function applyCardBackground(widget, palette) {
+  const gradient = new LinearGradient();
+  gradient.colors = [
+    new Color(palette.backgroundTop),
+    new Color(palette.backgroundBottom),
+  ];
+  gradient.locations = [0, 1];
+  widget.backgroundGradient = gradient;
+}
+
+return {
+  version,
+  palettes,
+  typography,
+  layout,
+  normalizeThemeMode,
+  resolveThemeMode,
+  resolvePalette,
+  applyCardBackground,
+};
+
+})();
+
+const ProviderAdapters = (() => {
+/**
+ * AI Balance Provider Adapters
+ * Provider-specific fetch, parse, compatibility, and normalization logic.
+ */
+
+
+
+const {
+  PROVIDER_STATUSES,
+  classifyCodexWindows,
+  codexResetAt,
+  decodeJwtPayload,
+  money,
+  normalizeProviderResult,
+  remainingPercent,
+} = Core;
+
+const PROVIDERS = [
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    shortName: "DS",
+    color: "yellow",
+    logoUrl:
+      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/deepseek.png",
+    keyLabel: "DeepSeek API Key",
+    dashboardUrl: "https://platform.deepseek.com/usage",
+    async fetch(context) {
+      return context.requestJSON(
+        "https://api.deepseek.com/user/balance",
+        context.credential
+      );
+    },
+    parse(json, context) {
+      const balances = json.balance_infos || [];
+      const item =
+        balances.find((value) => value.currency === "CNY") || balances[0];
+      if (!item) throw new Error("响应中没有余额");
+      return {
+        ...money(item.total_balance, item.currency, context.settings.usdToCnyRate),
+        detail: `充值 ${
+          money(item.topped_up_balance, item.currency, context.settings.usdToCnyRate)
+            .display
+        }`,
+        meta: { source: "deepseek" },
+      };
+    },
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    shortName: "CX",
+    color: "red",
+    logoUrl:
+      "https://raw.githubusercontent.com/braziliany/AI-balance/main/assets/logos/codex.png",
+    keyLabel: "Codex Access Token",
+    dashboardUrl: "https://chatgpt.com/codex/settings/usage",
+    async fetch(context) {
+      const accountId = codexAccountId(
+        context.credential,
+        context.settings.codexAccountId
+      );
+      const headers = accountId ? { "ChatGPT-Account-Id": accountId } : {};
+      return context.requestJSON(
+        "https://chatgpt.com/backend-api/wham/usage",
+        context.credential,
+        headers
+      );
+    },
+    parse(json, context) {
+      const { shortWindow, weeklyWindow } = classifyCodexWindows(json);
+      const shortRemaining = remainingPercent(shortWindow);
+      const weeklyRemaining = remainingPercent(weeklyWindow);
+      const mainRemaining =
+        shortRemaining !== null ? shortRemaining : weeklyRemaining;
+      if (mainRemaining === null) {
+        throw new Error("Codex 额度响应格式已变化");
+      }
+      const shortResetAt = codexResetAt(shortWindow, context.now);
+      const weeklyResetAt = codexResetAt(weeklyWindow, context.now);
+      const resetAt = weeklyResetAt || shortResetAt;
+      return {
+        value: mainRemaining,
+        unit: "%",
+        display: `${mainRemaining}%`,
+        detail: shortRemaining !== null ? "5小时额度" : "周额度",
+        secondaryDetail:
+          weeklyRemaining === null ? "" : `周额度 ${weeklyRemaining}%`,
+        resetAt,
+        quota: {
+          shortWindowRemainingPercent: shortRemaining,
+          shortWindowResetAt: shortResetAt,
+          weeklyRemainingPercent: weeklyRemaining,
+          weeklyResetAt,
+        },
+        meta: { source: "codex", experimental: true },
+      };
+    },
+  },
+  {
+    id: "muteki",
+    name: "Muteki",
+    shortName: "MT",
+    color: "orange",
+    logoUrl: "",
+    keyLabel: "Muteki API Key",
+    dashboardUrl: "https://api.muteki.site",
+    async fetch(context) {
+      return context.requestJSON(
+        "https://api.muteki.site/v1/usage",
+        context.credential
+      );
+    },
+    parse(json, context) {
+      if (json?.isValid === false) throw new Error("Muteki API Key 无效");
+      const remaining =
+        json?.remaining === null || json?.remaining === undefined
+          ? null
+          : Number(json.remaining);
+      const balance =
+        json?.balance === null || json?.balance === undefined
+          ? null
+          : Number(json.balance);
+      const hasRemaining = Number.isFinite(remaining);
+      const hasBalance = Number.isFinite(balance);
+      if (!hasRemaining && !hasBalance) throw new Error("余额响应缺少有效数值");
+      if (hasRemaining && hasBalance) {
+        const tolerance = Math.max(0.01, Math.abs(balance) * 0.01);
+        if (Math.abs(remaining - balance) > tolerance) {
+          throw new Error("余额响应异常");
+        }
+      }
+      const wallet = hasRemaining ? remaining : balance;
+      if (wallet < 0) throw new Error("余额响应异常");
+      const currency = String(json?.unit || "USD").toUpperCase();
+      if (currency !== "USD") throw new Error("Muteki 币种响应异常");
+      const todayRaw = json?.usage?.today?.actual_cost;
+      const todayActualCost =
+        todayRaw === null || todayRaw === undefined
+          ? null
+          : Number(todayRaw);
+      const hasTodayCost =
+        Number.isFinite(todayActualCost) && todayActualCost >= 0;
+      const totalRaw = json?.usage?.total?.actual_cost;
+      const totalActualCost =
+        totalRaw === null || totalRaw === undefined ? null : Number(totalRaw);
+      const requestsToday = Number(json?.usage?.today?.requests);
+      const totalTokensToday = Number(json?.usage?.today?.total_tokens);
+      const result = money(
+        wallet,
+        "USD",
+        context.settings.usdToCnyRate
+      );
+      return {
+        ...result,
+        detail: String(json?.planName || "钱包余额"),
+        secondaryDetail: hasTodayCost
+          ? `今日 ${money(todayActualCost, "USD").display}`
+          : "",
+        meta: {
+          source: "muteki",
+          planName: String(json?.planName || ""),
+          mode: String(json?.mode || ""),
+          todayActualCost: hasTodayCost ? todayActualCost : null,
+          totalActualCost: Number.isFinite(totalActualCost)
+            ? totalActualCost
+            : null,
+          requestsToday: Number.isFinite(requestsToday) ? requestsToday : null,
+          totalTokensToday: Number.isFinite(totalTokensToday)
+            ? totalTokensToday
+            : null,
+        },
+      };
+    },
+  },
+];
+
+function codexAccountId(token, configuredAccountId = "") {
+  if (configuredAccountId) return configuredAccountId;
+  const payload = decodeJwtPayload(token);
+  const auth = payload["https://api.openai.com/auth"] || {};
+  return (
+    auth.chatgpt_account_id ||
+    payload.chatgpt_account_id ||
+    payload.account_id ||
+    ""
+  );
+}
+
+async function fetchProvider(provider, context) {
+  const raw = await provider.fetch(context);
+  const parsed = provider.parse(raw, context);
+  return normalizeProviderResult(
+    provider,
+    parsed,
+    {
+      status: parsed.status || PROVIDER_STATUSES.OK,
+      renderedAt: context.now,
+      successfulFetchedAt: context.now,
+    }
+  );
+}
+
+function parseProviderFixture(providerId, response, context = {}) {
+  const provider = PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) throw new Error(`未知 Provider：${providerId}`);
+  const now = Number(context.now || Date.now());
+  const settings = {
+    usdToCnyRate: 0,
+    codexAccountId: "",
+    ...(context.settings || {}),
+  };
+  const parsed = provider.parse(response, { ...context, now, settings });
+  return normalizeProviderResult(provider, parsed, {
+    status: parsed.status || PROVIDER_STATUSES.OK,
+    renderedAt: now,
+    successfulFetchedAt: now,
+  });
+}
+
+return {
+  PROVIDERS,
+  codexAccountId,
+  fetchProvider,
+  parseProviderFixture,
+};
+
+})();
 
 const { PROVIDER_STATUSES } = Core;
 const { PROVIDERS } = ProviderAdapters;

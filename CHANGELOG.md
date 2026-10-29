@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2.3.0 · 2026-10-29
+
+- 将 Core、Provider Adapters、LPL Design System 内置到独立 `AI-Balance.js`，消除本地模块加载依赖。
+- 三个 Provider 的请求与解析、设置版本 9、Keychain 标识、缓存和历史路径保持兼容；未增加 InternAI。
+- 保留三个历史模块源码；共享 LPL Design System 继续供其他项目复用。
+- 安装器及 manifest 仅安装主脚本；限制旧多文件 manifest，增加写入后校验，失败恢复原文件。
+- 新增单文件语法、隔离、行为及六种渲染树回归，增加安装失败和共享文件保护测试。
+- 全部 12 组自动化测试通过；G5 iPhone 真机验收由用户确认通过。本次将代码推送 main，不创建 Tag 或 GitHub Release。
+
 ## 2.2.0 · 2026-09-01
 
 - 正式 Provider 收敛为 DeepSeek、Codex 与 Muteki，移除 StepFun、Kimi 和 SerpBase MCP 运行时与设置入口。

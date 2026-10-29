@@ -1,26 +1,12 @@
-const Core = require("../AI-Balance-Core");
-
-if (typeof global.Data === "undefined") {
-  global.Data = {
-    fromBase64String: (value) => ({
-      toRawString: () => Buffer.from(value, "base64").toString("utf8"),
-    }),
-  };
-}
-
-const previousImportModule = global.importModule;
-global.importModule = (name) => {
-  if (name === "AI-Balance-Core") return Core;
-  if (typeof previousImportModule === "function") return previousImportModule(name);
-  throw new Error(`未知测试模块：${name}`);
+// Exercise the shipped standalone implementations in the existing regression suite.
+const fs = require("node:fs");
+const path = require("node:path");
+const source = fs.readFileSync(path.join(__dirname, "..", "AI-Balance.js"), "utf8");
+const Data = {
+  fromBase64String: value => ({
+    toRawString: () => Buffer.from(value, "base64").toString("utf8"),
+  }),
 };
-
-let ProviderAdapters;
-try {
-  ProviderAdapters = require("../AI-Balance-Providers");
-} finally {
-  if (previousImportModule === undefined) delete global.importModule;
-  else global.importModule = previousImportModule;
-}
-
-module.exports = { Core, ProviderAdapters };
+module.exports = new Function("Data", source.replace(
+  "await main();", "return { Core, ProviderAdapters };"
+))(Data);

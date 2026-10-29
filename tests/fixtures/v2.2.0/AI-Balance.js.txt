@@ -1,0 +1,1047 @@
+// Variables used by Scriptable.
+// These must be at the very top of the file. Do not edit.
+// icon-color: deep-purple; icon-glyph: wallet;
+
+/**
+ * AI Balance Widget
+ * DeepSeek / Codex / Muteki 余额与额度概览
+ *
+ * 依赖：AI-Balance-Core.js、AI-Balance-Providers.js、LPL-Design-System.js
+ * （均与本脚本放在 Scriptable 同一目录）
+ * 首次在 Scriptable App 内运行会打开配置菜单，密钥保存于 iOS Keychain。
+ */
+
+const APP = {
+  name: "AI Balance",
+  version: "2.2.0",
+  settingsVersion: 9,
+  keychainPrefix: "ai-balance.",
+  cacheFile: "ai-balance-cache.json",
+  historyFile: "ai-balance-history.json",
+  logoCacheDirectory: "ai-balance-logos",
+};
+
+let DesignSystem;
+let Core;
+let ProviderAdapters;
+try {
+  DesignSystem = importModule("LPL-Design-System");
+  Core = importModule("AI-Balance-Core");
+  ProviderAdapters = importModule("AI-Balance-Providers");
+} catch (error) {
+  throw new Error(
+    "缺少 AI Balance 依赖模块。请重新运行安装器安装全部脚本。"
+  );
+}
+
+const { PROVIDER_STATUSES } = Core;
+const { PROVIDERS } = ProviderAdapters;
+
+const CONFIG = {
+  title: "AI BALANCE",
+  themeMode: "dark",
+  refreshMinutes: 30,
+  cacheHours: 24,
+  codexAccountId: "",
+  hiddenProviders: [],
+  providerOrder: ["deepseek", "codex", "muteki"],
+  lowCnyThreshold: 10,
+  lowUsdThreshold: 2,
+  lowQuotaThreshold: 20,
+  usdToCnyRate: 0,
+  previewFamily: "medium",
+};
+
+function keychainKey(id) {
+  return `${APP.keychainPrefix}${id}`;
+}
+
+function getSecret(id) {
+  const key = keychainKey(id);
+  return Keychain.contains(key) ? Keychain.get(key) : "";
+}
+
+function setSecret(id, value) {
+  const key = keychainKey(id);
+  if (value) Keychain.set(key, value.trim());
+  else if (Keychain.contains(key)) Keychain.remove(key);
+}
+
+function settingsPath() {
+  return FileManager.local().joinPath(
+    FileManager.local().documentsDirectory(),
+    "ai-balance-settings.json"
+  );
+}
+
+function loadSettings() {
+  const path = settingsPath();
+  if (!FileManager.local().fileExists(path)) {
+    return { ...CONFIG, settingsVersion: APP.settingsVersion };
+  }
+  try {
+    const stored = JSON.parse(FileManager.local().readString(path));
+    // v1 的主题菜单是“每点击一次循环切换”，容易误切到浅色。
+    // 第一次升级到 v2 时恢复与 LPL Schedule 相同的深蓝主题。
+    if (!stored.settingsVersion) stored.themeMode = "dark";
+    const providerIds = PROVIDERS.map((provider) => provider.id);
+    const storedOrder = Array.isArray(stored.providerOrder)
+      ? [...new Set(stored.providerOrder)].filter((id) =>
+          providerIds.includes(id)
+        )
+      : [];
+    const providerOrder = [
+      ...storedOrder,
+      ...providerIds.filter((id) => !storedOrder.includes(id)),
+    ];
+    const hiddenProviders = Array.isArray(stored.hiddenProviders)
+      ? [...new Set(stored.hiddenProviders)].filter((id) =>
+          providerIds.includes(id)
+        )
+      : [];
+    const {
+      kimiRegion: _kimiRegion,
+      serpBaseCredits: _serpBaseCredits,
+      lowCreditsThreshold: _lowCreditsThreshold,
+      lowMoneyThreshold,
+      ...compatibleStored
+    } = stored;
+    const storedCnyThreshold = Number(stored.lowCnyThreshold);
+    const legacyMoneyThreshold = Number(lowMoneyThreshold);
+    const storedUsdThreshold = Number(stored.lowUsdThreshold);
+    const lowCnyThreshold =
+      Number.isFinite(storedCnyThreshold) && storedCnyThreshold >= 0
+        ? storedCnyThreshold
+        : Number.isFinite(legacyMoneyThreshold) && legacyMoneyThreshold >= 0
+          ? legacyMoneyThreshold
+          : CONFIG.lowCnyThreshold;
+    const lowUsdThreshold =
+      Number.isFinite(storedUsdThreshold) && storedUsdThreshold >= 0
+        ? storedUsdThreshold
+        : CONFIG.lowUsdThreshold;
+    return {
+      ...CONFIG,
+      ...compatibleStored,
+      providerOrder,
+      hiddenProviders,
+      lowCnyThreshold,
+      lowUsdThreshold,
+      previewFamily: ["small", "medium", "large"].includes(
+        stored.previewFamily
+      )
+        ? stored.previewFamily
+        : CONFIG.previewFamily,
+      settingsVersion: APP.settingsVersion,
+    };
+  } catch (_) {
+    return { ...CONFIG, settingsVersion: APP.settingsVersion };
+  }
+}
+
+function saveSettings(settings) {
+  FileManager.local().writeString(
+    settingsPath(),
+    JSON.stringify(settings, null, 2)
+  );
+}
+
+function cachePath() {
+  return FileManager.local().joinPath(
+    FileManager.local().documentsDirectory(),
+    APP.cacheFile
+  );
+}
+
+function readCache() {
+  const path = cachePath();
+  if (!FileManager.local().fileExists(path)) return {};
+  try {
+    return JSON.parse(FileManager.local().readString(path));
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeCache(data) {
+  FileManager.local().writeString(cachePath(), JSON.stringify(data));
+}
+
+function historyPath() {
+  return FileManager.local().joinPath(
+    FileManager.local().documentsDirectory(),
+    APP.historyFile
+  );
+}
+
+function readHistory() {
+  const path = historyPath();
+  if (!FileManager.local().fileExists(path)) return {};
+  try {
+    return JSON.parse(FileManager.local().readString(path));
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeHistory(data) {
+  FileManager.local().writeString(historyPath(), JSON.stringify(data));
+}
+
+async function requestJSON(url, key, headers = {}) {
+  const request = new Request(url);
+  request.method = "GET";
+  request.timeoutInterval = 15;
+  request.headers = {
+    Accept: "application/json",
+    Authorization: `Bearer ${key}`,
+    ...headers,
+  };
+  const json = await request.loadJSON();
+  const status = request.response ? request.response.statusCode : 200;
+  if (status < 200 || status >= 300) {
+    const detail = json.error?.message || json.error || json.message || status;
+    throw new Error(String(detail));
+  }
+  return json;
+}
+
+function logoCachePath(providerId) {
+  const fm = FileManager.local();
+  const directory = fm.joinPath(
+    fm.documentsDirectory(),
+    APP.logoCacheDirectory
+  );
+  if (!fm.fileExists(directory)) fm.createDirectory(directory, true);
+  return fm.joinPath(directory, `${providerId}.png`);
+}
+
+function clearLogoCache() {
+  const fm = FileManager.local();
+  const directory = fm.joinPath(
+    fm.documentsDirectory(),
+    APP.logoCacheDirectory
+  );
+  if (fm.fileExists(directory)) fm.remove(directory);
+}
+
+async function loadProviderLogos(providers) {
+  const fm = FileManager.local();
+  const entries = await Promise.all(
+    providers.map(async (provider) => {
+      const path = logoCachePath(provider.id);
+      try {
+        if (fm.fileExists(path)) return [provider.id, fm.readImage(path)];
+        const request = new Request(provider.logoUrl);
+        request.timeoutInterval = 10;
+        const image = await request.loadImage();
+        fm.writeImage(path, image);
+        return [provider.id, image];
+      } catch (_) {
+        return [provider.id, null];
+      }
+    })
+  );
+  return Object.fromEntries(entries);
+}
+
+function orderedProviders(settings) {
+  const byId = Object.fromEntries(
+    PROVIDERS.map((provider) => [provider.id, provider])
+  );
+  return settings.providerOrder
+    .filter((id) => !settings.hiddenProviders.includes(id))
+    .map((id) => byId[id])
+    .filter(Boolean);
+}
+
+async function loadBalances(settings) {
+  const cache = readCache();
+  const history = readHistory();
+  const now = Date.now();
+  const results = await Promise.all(
+    orderedProviders(settings).map(async (provider) => {
+      const credential = getSecret(provider.id);
+      if (!credential) {
+        return Core.createUnconfiguredResult(provider, now);
+      }
+      try {
+        const item = await ProviderAdapters.fetchProvider(provider, {
+          credential,
+          settings,
+          now,
+          requestJSON,
+        });
+        const oldValue = Number(cache[provider.id]?.value);
+        if (Number.isFinite(oldValue)) {
+          item.delta = item.value - oldValue;
+          item.change = Core.changeText(item.delta, item.unit);
+        }
+        item.isLow = Core.isLowBalance(item, settings);
+        cache[provider.id] = item;
+        return item;
+      } catch (error) {
+        const item = Core.resolveProviderFailure(
+          provider,
+          cache[provider.id],
+          now,
+          settings.cacheHours,
+          error
+        );
+        item.isLow = Core.isLowBalance(item, settings);
+        return item;
+      }
+    })
+  );
+  Core.applyHistory(results, history, now);
+  writeCache(cache);
+  writeHistory(history);
+  return results;
+}
+
+function addText(stack, text, size, color, weight = "regular") {
+  const label = stack.addText(String(text));
+  label.font =
+    weight === "bold" ? Font.boldSystemFont(size) : Font.systemFont(size);
+  label.textColor = new Color(color);
+  label.lineLimit = 1;
+  label.minimumScaleFactor = 0.65;
+  return label;
+}
+
+function addHeader(widget, palette, settings) {
+  const header = widget.addStack();
+  header.centerAlignContent();
+  const mark = header.addStack();
+  mark.size = new Size(16, 16);
+  mark.backgroundColor = new Color(palette.yellow);
+  mark.cornerRadius = 4;
+  header.addSpacer(10);
+  addText(header, settings.title, 16, palette.white, "bold");
+  header.addSpacer();
+  addText(header, "●", 9, palette.orange);
+}
+
+function addProviderBadge(parent, item, palette, logos, compact = false) {
+  const badge = parent.addStack();
+  badge.size = new Size(compact ? 26 : 30, compact ? 20 : 22);
+  badge.cornerRadius = 6;
+  badge.backgroundColor = new Color(palette[item.color], 0.18);
+  badge.centerAlignContent();
+  badge.addSpacer();
+  const logo = logos[item.id];
+  if (logo) {
+    const image = badge.addImage(logo);
+    const edge = compact ? 15 : 17;
+    image.imageSize = new Size(edge, edge);
+    image.cornerRadius = compact ? 3 : 4;
+    image.applyFittingContentMode();
+  } else {
+    const initials = addText(
+      badge,
+      item.shortName,
+      compact ? 9 : 10,
+      palette[item.color],
+      "bold"
+    );
+    initials.centerAlignText();
+  }
+  badge.addSpacer();
+  return badge;
+}
+
+function addProviderRow(parent, item, palette, logos, compact = false) {
+  const row = parent.addStack();
+  row.url = item.dashboardUrl;
+  row.centerAlignContent();
+  addProviderBadge(row, item, palette, logos, compact);
+  row.addSpacer(compact ? 7 : 9);
+  const info = row.addStack();
+  info.layoutVertically();
+  addText(info, item.name, compact ? 12 : 14, palette.white, "bold");
+  if (!compact) addText(info, item.detail, 10, palette.secondary);
+  if (!compact) {
+    const extra = [item.secondaryDetail, item.convertedDisplay]
+      .filter(Boolean)
+      .join(" · ");
+    if (extra) addText(info, extra, 9, palette.muted);
+    if (item.periodDetail) {
+      addText(info, item.periodDetail, 9, palette[item.color]);
+    }
+  }
+  row.addSpacer();
+  const color = item.isLow
+    ? palette.red
+    :
+    item.status === PROVIDER_STATUSES.ERROR ||
+    item.status === PROVIDER_STATUSES.UNCONFIGURED
+      ? palette.muted
+      : palette.white;
+  addText(row, item.display, compact ? 14 : 17, color, "bold");
+}
+
+function addBalanceCard(parent, item, palette, logos) {
+  const card = parent.addStack();
+  card.url = item.dashboardUrl;
+  card.layoutVertically();
+  // Large-widget highlight cards share one fixed footprint so their
+  // translucent backgrounds stay aligned even when content lengths differ.
+  card.size = new Size(150, 145);
+  card.setPadding(11, 12, 10, 12);
+  card.cornerRadius = 12;
+  card.backgroundColor = new Color(palette.divider, 0.07);
+
+  const top = card.addStack();
+  top.centerAlignContent();
+  addProviderBadge(top, item, palette, logos, true);
+  top.addSpacer(7);
+  addText(top, item.name, 15, palette.white, "bold");
+  card.addSpacer(7);
+
+  const valueColor = item.isLow
+    ? palette.red
+    :
+    item.status === PROVIDER_STATUSES.ERROR ||
+    item.status === PROVIDER_STATUSES.UNCONFIGURED
+      ? palette.muted
+      : palette.white;
+  addText(card, item.display, 24, valueColor, "bold");
+  if (item.convertedDisplay) {
+    card.addSpacer(2);
+    addText(card, item.convertedDisplay, 11, palette[item.color], "bold");
+  }
+  card.addSpacer(3);
+  addText(
+    card,
+    [item.detail, item.change].filter(Boolean).join(" · "),
+    10,
+    palette.secondary
+  );
+  if (item.secondaryDetail) {
+    card.addSpacer(2);
+    addText(card, item.secondaryDetail, 9, palette.muted);
+  }
+  if (item.periodDetail) {
+    card.addSpacer(2);
+    addText(card, item.periodDetail, 9, palette[item.color]);
+  }
+  return card;
+}
+
+function formatQuotaReset(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return "重置 --";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "重置 --";
+  const now = new Date();
+  const pad = (part) => String(part).padStart(2, "0");
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return sameDay
+    ? `重置 ${time}`
+    : `重置 ${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
+
+function addCodexQuotaMetric(parent, value, label, resetAt, palette, isLow) {
+  const column = parent.addStack();
+  column.layoutVertically();
+  column.size = new Size(58, 67);
+  const hasValue =
+    value !== null && value !== undefined && Number.isFinite(Number(value));
+  const display = hasValue ? `${Number(value)}%` : "--";
+  addText(
+    column,
+    display,
+    20,
+    isLow ? palette.red : palette.white,
+    "bold"
+  );
+  column.addSpacer(2);
+  addText(column, label, 9, palette.secondary, "bold");
+  column.addSpacer(3);
+  addText(column, formatQuotaReset(resetAt), 8, palette.muted);
+}
+
+function addCodexQuotaCard(parent, item, palette, logos, settings) {
+  const card = parent.addStack();
+  card.url = item.dashboardUrl;
+  card.layoutVertically();
+  card.size = new Size(150, 145);
+  card.setPadding(11, 12, 10, 12);
+  card.cornerRadius = 12;
+  card.backgroundColor = new Color(palette.divider, 0.07);
+
+  const top = card.addStack();
+  top.centerAlignContent();
+  addProviderBadge(top, item, palette, logos, true);
+  top.addSpacer(7);
+  addText(top, item.name, 15, palette.white, "bold");
+  card.addSpacer(8);
+
+  const metrics = card.addStack();
+  const shortValue = item.quota.shortWindowRemainingPercent;
+  const weeklyValue = item.quota.weeklyRemainingPercent;
+  addCodexQuotaMetric(
+    metrics,
+    shortValue,
+    "5小时额度",
+    item.quota.shortWindowResetAt,
+    palette,
+    shortValue !== null &&
+      shortValue !== undefined &&
+      Number.isFinite(Number(shortValue)) &&
+      Number(shortValue) <= settings.lowQuotaThreshold
+  );
+  metrics.addSpacer(8);
+  addCodexQuotaMetric(
+    metrics,
+    weeklyValue,
+    "周额度",
+    item.quota.weeklyResetAt,
+    palette,
+    weeklyValue !== null &&
+      weeklyValue !== undefined &&
+      Number.isFinite(Number(weeklyValue)) &&
+      Number(weeklyValue) <= settings.lowQuotaThreshold
+  );
+  return card;
+}
+
+function addHighlightCard(parent, item, palette, logos, settings) {
+  return item.id === "codex"
+    ? addCodexQuotaCard(parent, item, palette, logos, settings)
+    : addBalanceCard(parent, item, palette, logos);
+}
+
+function createWidget(items, settings, logos, familyOverride = null) {
+  const widget = new ListWidget();
+  const palette = DesignSystem.resolvePalette(settings.themeMode);
+  DesignSystem.applyCardBackground(widget, palette);
+  widget.setPadding(15, 15, 13, 15);
+  addHeader(widget, palette, settings);
+  widget.addSpacer(12);
+
+  const family = familyOverride || config.widgetFamily || "medium";
+  if (family === "small") {
+    const configured = items.filter(
+      (item) => item.status !== PROVIDER_STATUSES.UNCONFIGURED
+    );
+    for (const item of configured.slice(0, 3)) {
+      addProviderRow(widget, item, palette, logos, true);
+      widget.addSpacer(7);
+    }
+    if (!configured.length) {
+      addText(widget, "请在 App 内运行脚本完成配置", 12, palette.secondary);
+    }
+  } else if (family === "large") {
+    const highlights = widget.addStack();
+    if (items[0]) {
+      addHighlightCard(highlights, items[0], palette, logos, settings);
+    }
+    if (items[1]) {
+      highlights.addSpacer(10);
+      addHighlightCard(highlights, items[1], palette, logos, settings);
+    }
+    if (items.length) widget.addSpacer(13);
+
+    const details = items.slice(2);
+    details.forEach((item, index) => {
+      addProviderRow(widget, item, palette, logos, false);
+      if (index < details.length - 1) widget.addSpacer();
+    });
+  } else {
+    const columns = widget.addStack();
+    const left = columns.addStack();
+    left.layoutVertically();
+    columns.addSpacer(14);
+    const right = columns.addStack();
+    right.layoutVertically();
+    items.forEach((item, index) => {
+      const column = index < 3 ? left : right;
+      addProviderRow(column, item, palette, logos, true);
+      column.addSpacer(9);
+    });
+  }
+
+  widget.addSpacer();
+  const lastSuccess = items.reduce(
+    (latest, item) =>
+      Math.max(
+        latest,
+        Number(item.successfulFetchedAt || item.updatedAt || 0)
+      ),
+    0
+  );
+  const updated = lastSuccess ? new Date(lastSuccess) : new Date();
+  const footer = widget.addStack();
+  addText(
+    footer,
+    `${lastSuccess ? "成功 " : ""}${updated.getMonth() + 1}/${updated.getDate()} ${String(
+      updated.getHours()
+    ).padStart(2, "0")}:${String(updated.getMinutes()).padStart(2, "0")}`,
+    9,
+    palette.muted
+  );
+  footer.addSpacer();
+  addText(footer, `v${APP.version}`, 9, palette.muted);
+  widget.refreshAfterDate = new Date(
+    Date.now() + settings.refreshMinutes * 60000
+  );
+  return widget;
+}
+
+async function promptText(title, message, value = "", secure = false) {
+  const alert = new Alert();
+  alert.title = title;
+  alert.message = message;
+  if (secure) alert.addSecureTextField("", String(value));
+  else alert.addTextField("", String(value));
+  alert.addAction("保存");
+  alert.addCancelAction("取消");
+  const index = await alert.presentAlert();
+  return index === -1 ? null : alert.textFieldValue(0).trim();
+}
+
+async function chooseThemeMode(current) {
+  const modes = [
+    ["dark", "深蓝主题（与 LPL 一致）"],
+    ["light", "浅色主题"],
+    ["auto", "跟随系统"],
+  ];
+  const alert = new Alert();
+  alert.title = "组件主题";
+  alert.message = `当前：${current}`;
+  modes.forEach(([, label]) => alert.addAction(label));
+  alert.addCancelAction("取消");
+  const choice = await alert.presentSheet();
+  return choice === -1 ? current : modes[choice][0];
+}
+
+async function chooseVisibleProviders(currentHidden) {
+  const hidden = new Set(currentHidden);
+  while (true) {
+    const alert = new Alert();
+    alert.title = "显示服务";
+    alert.message = "点击切换；至少保留一个服务";
+    PROVIDERS.forEach((provider) =>
+      alert.addAction(
+        `${hidden.has(provider.id) ? "○" : "✓"} ${provider.name}`
+      )
+    );
+    alert.addCancelAction("完成");
+    const choice = await alert.presentSheet();
+    if (choice === -1) return [...hidden];
+    const id = PROVIDERS[choice].id;
+    if (hidden.has(id)) hidden.delete(id);
+    else if (hidden.size < PROVIDERS.length - 1) hidden.add(id);
+  }
+}
+
+async function chooseProviderOrder(currentOrder) {
+  const order = [...currentOrder];
+  while (true) {
+    const alert = new Alert();
+    alert.title = "服务顺序";
+    alert.message = "点击服务使其上移一位";
+    order.forEach((id, index) => {
+      const provider = PROVIDERS.find((item) => item.id === id);
+      alert.addAction(`${index + 1}. ${provider.name}`);
+    });
+    alert.addCancelAction("完成");
+    const choice = await alert.presentSheet();
+    if (choice === -1) return order;
+    if (choice > 0) {
+      [order[choice - 1], order[choice]] = [order[choice], order[choice - 1]];
+    }
+  }
+}
+
+async function chooseOption(title, current, options) {
+  const alert = new Alert();
+  alert.title = title;
+  alert.message = `当前：${current}`;
+  options.forEach(([value, label]) => alert.addAction(label));
+  alert.addCancelAction("取消");
+  const choice = await alert.presentSheet();
+  return choice === -1 ? current : options[choice][0];
+}
+
+async function editWarningThresholds(settings) {
+  const alert = new Alert();
+  alert.title = "低余额警示阈值";
+  alert.message = "达到或低于阈值时使用红色显示";
+  alert.addTextField("人民币余额", String(settings.lowCnyThreshold));
+  alert.addTextField("美元余额", String(settings.lowUsdThreshold));
+  alert.addTextField("Codex %", String(settings.lowQuotaThreshold));
+  alert.addAction("保存");
+  alert.addCancelAction("取消");
+  if ((await alert.presentAlert()) === -1) return;
+
+  const values = [0, 1, 2].map((index) =>
+    Number(alert.textFieldValue(index))
+  );
+  if (values.every((value) => Number.isFinite(value) && value >= 0)) {
+    settings.lowCnyThreshold = values[0];
+    settings.lowUsdThreshold = values[1];
+    settings.lowQuotaThreshold = Math.min(100, values[2]);
+  }
+}
+
+function formatAge(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return "无成功记录";
+  const minutes = Math.max(0, Math.round((Date.now() - value) / 60000));
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`;
+}
+
+function diagnosticReport(settings, cache) {
+  const visible = orderedProviders(settings);
+  const lines = [
+    `${APP.name} v${APP.version}`,
+    `主题：${settings.themeMode}`,
+    `预览：${settings.previewFamily}`,
+    `刷新/缓存：${settings.refreshMinutes} 分钟 / ${settings.cacheHours} 小时`,
+    `显示服务：${visible.map((item) => item.name).join(", ")}`,
+    "",
+    ...visible.map((provider) => {
+      const item = cache[provider.id];
+      const fetchedAt = item?.successfulFetchedAt || item?.updatedAt;
+      return `${provider.name}：${item ? formatAge(fetchedAt) : "无缓存"}`;
+    }),
+    "",
+    "诊断报告不包含 API Key、Access Token 或 Account ID。",
+  ];
+  return lines.join("\n");
+}
+
+async function presentDiagnostics(settings) {
+  const report = diagnosticReport(settings, readCache());
+  const alert = new Alert();
+  alert.title = "诊断信息";
+  alert.message = report;
+  alert.addAction("复制报告");
+  alert.addCancelAction("关闭");
+  if ((await alert.presentAlert()) === 0) {
+    Pasteboard.copyString(report);
+  }
+}
+
+function settingsPageHTML(settings) {
+  const providers = PROVIDERS.map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    shortName: provider.shortName,
+    color: provider.color,
+    keyLabel: provider.keyLabel || "",
+    configured: Boolean(getSecret(provider.id)),
+  }));
+  const initial = JSON.stringify({
+    version: APP.version,
+    settings: { ...settings, codexAccountId: "" },
+    codexAccountIdConfigured: Boolean(settings.codexAccountId),
+    defaults: CONFIG,
+    providers,
+  }).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+:root{color-scheme:light dark;--bg:#f2f2f7;--card:#fff;--text:#111827;--sub:#8e8e93;--line:#e5e5ea;--blue:#0a84ff;--red:#ff3b30}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--sub:#98989d;--line:#38383a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+main{max-width:680px;margin:auto;padding:28px 16px calc(52px + env(safe-area-inset-bottom))}
+h1{font-size:30px;margin:4px 4px 2px}.version{color:var(--sub);margin:0 4px 26px;font-size:14px}
+.section{margin:0 0 24px}.section-title{margin:0 12px 8px;color:var(--sub);font-size:13px;text-transform:uppercase}
+.card{background:var(--card);border-radius:14px;overflow:hidden}.row{display:flex;align-items:center;gap:12px;min-height:54px;padding:8px 14px;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}
+.icon{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700;flex:0 0 auto}.yellow{background:#d59f00}.orange{background:#ff7043}.red{background:#ef476f}.blue{background:#0a84ff}.green{background:#34c759}.purple{background:#8957e5}.gray{background:#8e8e93}
+.label{min-width:0;flex:1}.label strong{display:block;font-size:16px}.hint{display:block;color:var(--sub);font-size:12px;margin-top:2px}
+input,select{max-width:48%;border:0;background:transparent;color:var(--sub);font:15px -apple-system;text-align:right;outline:none}input[type=password],input[type=text],input[type=number]{border-bottom:1px solid var(--line);padding:7px 2px}
+.switch{position:relative;width:50px;height:30px;flex:0 0 auto}.switch input{display:none}.slider{position:absolute;inset:0;background:#d1d1d6;border-radius:16px;transition:.2s}.slider:before{content:"";position:absolute;width:26px;height:26px;left:2px;top:2px;background:#fff;border-radius:50%;box-shadow:0 1px 3px #0004;transition:.2s}.switch input:checked+.slider{background:#34c759}.switch input:checked+.slider:before{transform:translateX(20px)}
+.order-row{display:flex;align-items:center;gap:8px}.order-buttons button{border:0;border-radius:7px;background:var(--bg);color:var(--blue);font-size:17px;width:32px;height:30px}
+button.action{border:0;background:transparent;color:var(--blue);font:16px -apple-system;padding:8px 0}.danger{color:var(--red)!important}
+.secret-editor{display:none;padding:10px 14px 12px 58px;border-bottom:1px solid var(--line)}.secret-editor.open{display:flex;gap:12px;align-items:center}.secret-editor input{max-width:none;flex:1;text-align:left}.secret-editor button{flex:0 0 auto}.chevron{color:var(--sub);font-size:22px;line-height:1}.key-row{cursor:pointer}
+.notice{color:var(--sub);font-size:12px;line-height:1.5;margin:8px 12px}.saved{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1c1c1ee8;color:#fff;padding:10px 18px;border-radius:22px;font-size:14px;opacity:0;pointer-events:none;transition:.2s}.saved.show{opacity:1}
+</style>
+</head>
+<body><main>
+<h1>AI Balance</h1><p class="version">设置中心 · v<span id="version"></span> · 关闭页面时自动保存</p>
+<section class="section"><p class="section-title">API 密钥</p><div class="card" id="accounts"></div><p class="notice">点击平台可修改密钥。已有密钥不会载入网页；留空代表保持不变。</p></section>
+<section class="section"><p class="section-title">账户详情</p><div class="card" id="accountDetails"></div></section>
+<section class="section"><p class="section-title">显示服务与顺序</p><div class="card" id="providers"></div></section>
+<section class="section"><p class="section-title">外观</p><div class="card">
+<label class="row"><span class="icon purple">UI</span><span class="label"><strong>主题</strong></span><select id="themeMode"><option value="dark">深蓝主题</option><option value="system">跟随系统</option></select></label>
+<label class="row"><span class="icon purple">□</span><span class="label"><strong>预览尺寸</strong></span><select id="previewFamily"><option value="small">小号</option><option value="medium">中号</option><option value="large">大号</option></select></label>
+</div></section>
+<section class="section"><p class="section-title">刷新与汇率</p><div class="card">
+<label class="row"><span class="icon blue">↻</span><span class="label"><strong>刷新频率</strong></span><select id="refreshMinutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option></select></label>
+<label class="row"><span class="icon blue">C</span><span class="label"><strong>缓存时长</strong></span><select id="cacheHours"><option value="6">6 小时</option><option value="12">12 小时</option><option value="24">24 小时</option><option value="48">48 小时</option></select></label>
+<label class="row"><span class="icon green">$</span><span class="label"><strong>USD → CNY 参考汇率</strong><span class="hint">0 表示关闭人民币估算</span></span><input id="usdToCnyRate" type="number" min="0" step="0.01"></label>
+</div></section>
+<section class="section"><p class="section-title">警示阈值</p><div class="card">
+<label class="row"><span class="icon red">¥</span><span class="label"><strong>人民币余额</strong></span><input id="lowCnyThreshold" type="number" min="0" step="1"></label>
+<label class="row"><span class="icon red">$</span><span class="label"><strong>美元余额</strong></span><input id="lowUsdThreshold" type="number" min="0" step="0.1"></label>
+<label class="row"><span class="icon red">%</span><span class="label"><strong>Codex 剩余</strong></span><input id="lowQuotaThreshold" type="number" min="0" max="100" step="1"></label>
+</div></section>
+<section class="section"><p class="section-title">工具</p><div class="card">
+<div class="row"><span class="icon blue">↻</span><span class="label"><strong>刷新品牌图标</strong><span class="hint">关闭页面后清除并重新下载</span></span><button class="action" id="refreshLogos">刷新</button></div>
+<div class="row"><span class="icon gray">≡</span><span class="label"><strong>经典设置菜单</strong><span class="hint">使用原来的分步菜单</span></span><button class="action" id="legacyMenu">打开</button></div>
+<div class="row"><span class="icon red">↺</span><span class="label"><strong>恢复默认 UI</strong><span class="hint">不会删除密钥和额度</span></span><button class="action danger" id="resetUI">恢复</button></div>
+</div></section>
+</main><div class="saved" id="toast"></div>
+<script>
+const initial=${initial}; const state={refreshLogos:false,legacyMenu:false,resetUI:false,clearSecrets:{},secrets:{}};
+const $=id=>document.getElementById(id); $("version").textContent=initial.version;
+const setValue=(id,value)=>{const node=$(id);if(node)node.value=String(value)};
+["themeMode","previewFamily","refreshMinutes","cacheHours","usdToCnyRate","lowCnyThreshold","lowUsdThreshold","lowQuotaThreshold"].forEach(id=>setValue(id,initial.settings[id]));
+const toast=text=>{const el=$("toast");el.textContent=text;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),1400)};
+const accounts=$("accounts");
+initial.providers.forEach(p=>{const wrapper=document.createElement("div");const row=document.createElement("div");row.className="row key-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong><span class="hint">'+(p.configured?'已配置':'未配置')+'</span></span><span class="chevron">›</span>';const editor=document.createElement("div");editor.className="secret-editor";editor.innerHTML='<input id="secret-'+p.id+'" type="password" placeholder="输入新密钥">'+(p.configured?'<button class="action danger">清除</button>':'');row.onclick=()=>editor.classList.toggle("open");const clear=editor.querySelector("button");if(clear)clear.onclick=e=>{e.stopPropagation();state.clearSecrets[p.id]=true;row.querySelector(".hint").textContent="关闭后清除";editor.classList.remove("open");toast("已标记清除")};wrapper.appendChild(row);wrapper.appendChild(editor);accounts.appendChild(wrapper)});
+const accountDetails=$("accountDetails");
+accountDetails.insertAdjacentHTML("beforeend",'<label class="row"><span class="icon red">ID</span><span class="label"><strong>Codex ID</strong><span class="hint">'+(initial.codexAccountIdConfigured?'已配置；留空保持':'通常从 Token 自动识别')+'</span></span><input id="codexAccountId" type="text" placeholder="'+(initial.codexAccountIdConfigured?'输入新 ID':'自动')+'"></label>');
+setValue("codexAccountId","");
+const providerBox=$("providers");let order=[...initial.settings.providerOrder];const hidden=new Set(initial.settings.hiddenProviders);
+function drawProviders(){providerBox.innerHTML="";order.forEach((id,index)=>{const p=initial.providers.find(x=>x.id===id);const row=document.createElement("div");row.className="row order-row";row.innerHTML='<span class="icon '+p.color+'">'+p.shortName+'</span><span class="label"><strong>'+p.name+'</strong></span><label class="switch"><input type="checkbox" '+(!hidden.has(id)?"checked":"")+'><span class="slider"></span></label><span class="order-buttons"><button data-d="-1">↑</button><button data-d="1">↓</button></span>';row.querySelector("input").onchange=e=>e.target.checked?hidden.delete(id):hidden.add(id);row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const next=index+Number(b.dataset.d);if(next<0||next>=order.length)return;[order[index],order[next]]=[order[next],order[index]];drawProviders()});providerBox.appendChild(row)})}drawProviders();
+$("refreshLogos").onclick=()=>{state.refreshLogos=true;toast("关闭后刷新图标")};$("legacyMenu").onclick=()=>{state.legacyMenu=true;toast("关闭后打开经典菜单")};$("resetUI").onclick=()=>{state.resetUI=confirm("恢复默认 UI 设置？密钥和额度不会被删除。");if(state.resetUI)toast("关闭后恢复默认")};
+window.__exportSettings=()=>{initial.providers.forEach(p=>{const value=$("secret-"+p.id).value.trim();if(value)state.secrets[p.id]=value});return {...state,settings:{themeMode:$("themeMode").value,previewFamily:$("previewFamily").value,refreshMinutes:Number($("refreshMinutes").value),cacheHours:Number($("cacheHours").value),usdToCnyRate:Number($("usdToCnyRate").value),lowCnyThreshold:Number($("lowCnyThreshold").value),lowUsdThreshold:Number($("lowUsdThreshold").value),lowQuotaThreshold:Number($("lowQuotaThreshold").value),codexAccountId:$("codexAccountId").value.trim(),providerOrder:order,hiddenProviders:[...hidden]}}};
+</script></body></html>`;
+}
+
+function applyWebSettings(settings, payload) {
+  if (payload.resetUI) {
+    settings.themeMode = CONFIG.themeMode;
+    settings.refreshMinutes = CONFIG.refreshMinutes;
+    settings.cacheHours = CONFIG.cacheHours;
+    settings.hiddenProviders = [...CONFIG.hiddenProviders];
+    settings.providerOrder = [...CONFIG.providerOrder];
+    settings.usdToCnyRate = CONFIG.usdToCnyRate;
+    settings.lowCnyThreshold = CONFIG.lowCnyThreshold;
+    settings.lowUsdThreshold = CONFIG.lowUsdThreshold;
+    settings.lowQuotaThreshold = CONFIG.lowQuotaThreshold;
+    settings.previewFamily = CONFIG.previewFamily;
+  } else {
+    const next = payload.settings || {};
+    settings.themeMode = ["dark", "system"].includes(next.themeMode)
+      ? next.themeMode
+      : settings.themeMode;
+    settings.previewFamily = ["small", "medium", "large"].includes(
+      next.previewFamily
+    )
+      ? next.previewFamily
+      : settings.previewFamily;
+    settings.refreshMinutes = [15, 30, 60].includes(next.refreshMinutes)
+      ? next.refreshMinutes
+      : settings.refreshMinutes;
+    settings.cacheHours = [6, 12, 24, 48].includes(next.cacheHours)
+      ? next.cacheHours
+      : settings.cacheHours;
+    settings.usdToCnyRate = Math.max(0, Number(next.usdToCnyRate) || 0);
+    settings.lowCnyThreshold = Math.max(
+      0,
+      Number(next.lowCnyThreshold) || 0
+    );
+    settings.lowUsdThreshold = Math.max(
+      0,
+      Number(next.lowUsdThreshold) || 0
+    );
+    settings.lowQuotaThreshold = Math.min(
+      100,
+      Math.max(0, Number(next.lowQuotaThreshold) || 0)
+    );
+    const nextCodexAccountId = String(next.codexAccountId || "").trim();
+    if (nextCodexAccountId) settings.codexAccountId = nextCodexAccountId;
+    const ids = PROVIDERS.map((provider) => provider.id);
+    const order = Array.isArray(next.providerOrder)
+      ? [...new Set(next.providerOrder.filter((id) => ids.includes(id)))]
+      : [];
+    settings.providerOrder = [...order, ...ids.filter((id) => !order.includes(id))];
+    const hiddenProviders = Array.isArray(next.hiddenProviders)
+      ? next.hiddenProviders.filter((id) => ids.includes(id))
+      : settings.hiddenProviders;
+    settings.hiddenProviders =
+      hiddenProviders.length < ids.length ? hiddenProviders : ids.slice(1);
+  }
+  for (const [id, value] of Object.entries(payload.secrets || {})) {
+    if (PROVIDERS.some((provider) => provider.id === id)) {
+      setSecret(id, value);
+    }
+  }
+  for (const [id, shouldClear] of Object.entries(payload.clearSecrets || {})) {
+    if (shouldClear) setSecret(id, "");
+  }
+  if (payload.refreshLogos) clearLogoCache();
+  saveSettings(settings);
+}
+
+async function configureWeb(settings) {
+  const webView = new WebView();
+  await webView.loadHTML(settingsPageHTML(settings));
+  await webView.present(false);
+  const raw = await webView.evaluateJavaScript(
+    "JSON.stringify(window.__exportSettings())"
+  );
+  const payload = JSON.parse(raw);
+  applyWebSettings(settings, payload);
+  return Boolean(payload.legacyMenu);
+}
+
+async function refreshProviderLogos() {
+  const confirmation = new Alert();
+  confirmation.title = "刷新品牌图标";
+  confirmation.message =
+    "将删除本地图标缓存。退出设置后会自动重新下载，不会影响密钥、余额或其他设置。";
+  confirmation.addAction("刷新");
+  confirmation.addCancelAction("取消");
+  if ((await confirmation.presentAlert()) !== 0) return;
+  clearLogoCache();
+  const result = new Alert();
+  result.title = "图标缓存已清除";
+  result.message = "完成设置后将自动重新下载品牌图标。";
+  result.addAction("好");
+  await result.presentAlert();
+}
+
+async function configureLegacy(settings) {
+  while (true) {
+    const sheet = new Alert();
+    sheet.title = APP.name;
+    sheet.message = "密钥仅保存在 iOS Keychain";
+    PROVIDERS.forEach((item) =>
+      sheet.addAction(
+        `${getSecret(item.id) ? "✓ " : ""}${item.keyLabel}`
+      )
+    );
+    sheet.addAction(
+      `Codex Account ID：${settings.codexAccountId ? "已配置" : "自动识别"}`
+    );
+    sheet.addAction(`主题：${settings.themeMode}`);
+    sheet.addAction(
+      `显示服务：${PROVIDERS.length - settings.hiddenProviders.length} 个`
+    );
+    sheet.addAction("服务顺序");
+    sheet.addAction(`刷新频率：${settings.refreshMinutes} 分钟`);
+    sheet.addAction(`缓存时长：${settings.cacheHours} 小时`);
+    sheet.addAction(
+      `USD→CNY：${settings.usdToCnyRate > 0 ? settings.usdToCnyRate : "关闭"}`
+    );
+    sheet.addAction(
+      `警示阈值：¥${settings.lowCnyThreshold} / $${settings.lowUsdThreshold} / ${settings.lowQuotaThreshold}%`
+    );
+    sheet.addAction(`预览尺寸：${settings.previewFamily}`);
+    sheet.addAction("刷新品牌图标");
+    sheet.addAction("诊断信息");
+    sheet.addDestructiveAction("恢复默认 UI");
+    sheet.addCancelAction("完成");
+    const choice = await sheet.presentSheet();
+    if (choice === -1) break;
+
+    const keyProviders = PROVIDERS;
+    if (choice < keyProviders.length) {
+      const provider = keyProviders[choice];
+      const value = await promptText(
+        provider.keyLabel,
+        "留空保存会删除已有密钥",
+        getSecret(provider.id),
+        true
+      );
+      if (value !== null) setSecret(provider.id, value);
+    } else if (choice === keyProviders.length) {
+      const value = await promptText(
+        "Codex Account ID",
+        "通常可从 Access Token 自动识别；自动识别失败时再填写",
+        settings.codexAccountId
+      );
+      if (value !== null) settings.codexAccountId = value;
+    } else if (choice === keyProviders.length + 1) {
+      settings.themeMode = await chooseThemeMode(settings.themeMode);
+    } else if (choice === keyProviders.length + 2) {
+      settings.hiddenProviders = await chooseVisibleProviders(
+        settings.hiddenProviders
+      );
+    } else if (choice === keyProviders.length + 3) {
+      settings.providerOrder = await chooseProviderOrder(
+        settings.providerOrder
+      );
+    } else if (choice === keyProviders.length + 4) {
+      settings.refreshMinutes = await chooseOption(
+        "刷新频率",
+        settings.refreshMinutes,
+        [[15, "15 分钟"], [30, "30 分钟"], [60, "60 分钟"]]
+      );
+    } else if (choice === keyProviders.length + 5) {
+      settings.cacheHours = await chooseOption(
+        "缓存时长",
+        settings.cacheHours,
+        [[6, "6 小时"], [12, "12 小时"], [24, "24 小时"], [48, "48 小时"]]
+      );
+    } else if (choice === keyProviders.length + 6) {
+      const value = await promptText(
+        "USD → CNY 参考汇率",
+        "仅用于本地估算；填 0 关闭人民币并列显示",
+        settings.usdToCnyRate
+      );
+      if (value !== null && Number.isFinite(Number(value))) {
+        settings.usdToCnyRate = Math.max(0, Number(value));
+      }
+    } else if (choice === keyProviders.length + 7) {
+      await editWarningThresholds(settings);
+    } else if (choice === keyProviders.length + 8) {
+      settings.previewFamily = await chooseOption(
+        "预览尺寸",
+        settings.previewFamily,
+        [["small", "小号"], ["medium", "中号"], ["large", "大号"]]
+      );
+    } else if (choice === keyProviders.length + 9) {
+      await refreshProviderLogos();
+    } else if (choice === keyProviders.length + 10) {
+      await presentDiagnostics(settings);
+    } else {
+      settings.themeMode = "dark";
+      settings.refreshMinutes = CONFIG.refreshMinutes;
+      settings.cacheHours = CONFIG.cacheHours;
+      settings.hiddenProviders = [...CONFIG.hiddenProviders];
+      settings.providerOrder = [...CONFIG.providerOrder];
+      settings.usdToCnyRate = CONFIG.usdToCnyRate;
+      settings.lowCnyThreshold = CONFIG.lowCnyThreshold;
+      settings.lowUsdThreshold = CONFIG.lowUsdThreshold;
+      settings.lowQuotaThreshold = CONFIG.lowQuotaThreshold;
+      settings.previewFamily = CONFIG.previewFamily;
+    }
+    saveSettings(settings);
+  }
+}
+
+async function main() {
+  const settings = loadSettings();
+  if (!config.runsInWidget) {
+    try {
+      const openLegacy = await configureWeb(settings);
+      if (openLegacy) await configureLegacy(settings);
+    } catch (_) {
+      await configureLegacy(settings);
+    }
+  }
+  const items = await loadBalances(settings);
+  const logos = await loadProviderLogos(items);
+  const widget = createWidget(
+    items,
+    settings,
+    logos,
+    config.runsInWidget ? null : settings.previewFamily
+  );
+  if (config.runsInWidget) {
+    Script.setWidget(widget);
+  } else {
+    if (settings.previewFamily === "small") await widget.presentSmall();
+    else if (settings.previewFamily === "large") await widget.presentLarge();
+    else await widget.presentMedium();
+  }
+  Script.complete();
+}
+
+await main();

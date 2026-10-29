@@ -46,16 +46,8 @@ for (const resource of manifest.resources) {
 
 assert.deepEqual(
   manifest.resources.map((resource) => resource.scriptName),
-  [
-    "LPL-Design-System",
-    "AI-Balance-Core",
-    "AI-Balance-Providers",
-    "AI-Balance",
-    "AI Balance Installer",
-  ]
+  ["AI-Balance"]
 );
-assert.match(widgetSource, /importModule\("AI-Balance-Core"\)/);
-assert.match(widgetSource, /importModule\("AI-Balance-Providers"\)/);
 assert.match(coreSource, /module\.exports/);
 assert.match(providersSource, /module\.exports/);
 assert.match(providersSource, /https:\/\/api\.muteki\.site\/v1\/usage/);
@@ -63,10 +55,9 @@ assert.doesNotMatch(
   providersSource,
   /api\.stepfun|moonshot|serpbase|id:\s*["'](?:stepfun|kimi|serpbase)["']/i
 );
-assert.doesNotMatch(
-  widgetSource,
-  /balance_infos|used_percent|primary_window|secondary_window|item\.progress/
-);
+assert.doesNotMatch(widgetSource, /\bimportModule\s*\(/);
+const rendererSource = widgetSource.slice(widgetSource.indexOf("function addText("), widgetSource.indexOf("async function promptText("));
+assert.doesNotMatch(rendererSource, /balance_infos|used_percent|primary_window|secondary_window|item\.progress/);
 assert.match(widgetSource, /settingsVersion:\s*9/);
 
 const logoReferences = Array.from(

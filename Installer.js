@@ -10,42 +10,17 @@
  */
 
 const CONFIG = {
-  version: "2.2.0",
+  version: "2.3.0",
   manifestUrl:
     "https://raw.githubusercontent.com/braziliany/AI-balance/main/manifest.json",
   changelogUrl:
     "https://raw.githubusercontent.com/braziliany/AI-balance/main/CHANGELOG.md",
   resources: [
     {
-      scriptName: "LPL-Design-System",
-      sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/main/LPL-Design-System.js",
-      marker: "LPL Scriptable Design System",
-    },
-    {
-      scriptName: "AI-Balance-Core",
-      sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance-Core.js",
-      marker: "AI Balance Core",
-    },
-    {
-      scriptName: "AI-Balance-Providers",
-      sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance-Providers.js",
-      marker: "AI Balance Provider Adapters",
-    },
-    {
-      scriptName: "AI-Balance",
-      sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance.js",
-      marker: 'importModule("LPL-Design-System")',
-    },
-    {
-      scriptName: "AI Balance Installer",
-      sourceUrl:
-        "https://raw.githubusercontent.com/braziliany/AI-balance/main/Installer.js",
-      marker: "AI Balance 一键安装器",
-    },
+      "scriptName": "AI-Balance",
+      "sourceUrl": "https://raw.githubusercontent.com/braziliany/AI-balance/main/AI-Balance.js",
+      "marker": "AI Balance Standalone v2.3.0"
+    }
   ],
 };
 
@@ -66,6 +41,9 @@ function normalizeManifest(value) {
     if (!String(resource.sourceUrl).startsWith("https://")) {
       throw new Error("远程 manifest 包含非 HTTPS 地址");
     }
+  }
+  if (value.resources.length !== 1 || value.resources[0].scriptName !== "AI-Balance") {
+    throw new Error("此安装器仅支持 AI-Balance 单文件资源");
   }
   return value;
 }
@@ -156,6 +134,9 @@ async function installDownloads(downloads) {
         content: await readExistingFile(fm, path),
       });
       fm.writeString(path, resource.content);
+      if (fm.readString(path) !== resource.content) {
+        throw new Error(`${resource.scriptName} 写入后校验失败`);
+      }
     }
   } catch (error) {
     for (const backup of backups.reverse()) {

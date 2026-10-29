@@ -1,6 +1,6 @@
 # AI Balance for Scriptable
 
-一个使用 `LPL-Design-System` 的 Scriptable 小组件，聚合三个长期使用且可自动查询的数据源：
+一个内置 LPL 设计系统的独立 Scriptable 小组件，聚合三个长期使用且可自动查询的数据源：
 
 - DeepSeek：人民币账户总余额与充值余额
 - Codex：5 小时额度、周额度及两套独立重置时间
@@ -13,7 +13,7 @@ Provider 图标会缓存在 Scriptable 本地；图标不可用时自动回退�
 ### 推荐：一键安装器
 
 1. 将仓库中的 `Installer.js` 复制到 Scriptable，命名为 `AI Balance Installer`。
-2. 运行安装器，它会下载并校验主脚本、Core、Provider Adapters、设计系统和最新版安装器。
+2. 运行安装器，它只下载并校验 `AI-Balance.js`。安装器自身需手动更新，旧模块不会被删除或覆盖。
 3. 运行 `AI-Balance`，配置 DeepSeek API Key、Codex Access Token 和 Muteki API Key。
 4. 在桌面添加 Scriptable 小号、中号或大号组件，并选择 `AI-Balance`。
 
@@ -21,12 +21,13 @@ Provider 图标会缓存在 Scriptable 本地；图标不可用时自动回退�
 
 ### 手动安装
 
-将以下文件放入 Scriptable 的同一 iCloud Drive 目录：
+只需将 `AI-Balance.js` 放入 Scriptable 的 iCloud Drive 目录即可运行，无需安装其他模块。
 
-- `AI-Balance.js`
-- `AI-Balance-Core.js`
-- `AI-Balance-Providers.js`
-- `LPL-Design-System.js`
+### v2.3.0 验证状态
+
+全部 12 组自动化测试通过，用户已明确确认 iPhone 真机验收通过。v2.3.0 单文件版本同步至 main；本次不创建 Tag 或 GitHub Release。
+
+验证范围见 [测试报告](docs/v2.3.0/automated-test-report.md)，真机确认见 [验收记录](docs/v2.3.0/iphone-acceptance.md)。
 
 ## 凭据与安全
 
@@ -83,8 +84,11 @@ Cache / History / ViewModel
 Widget Renderer
 ```
 
-- `AI-Balance-Providers.js`：Provider registry、请求、解析和字段兼容。
-- `AI-Balance-Core.js`：标准化、额度窗口、缓存、历史、阈值和数值纯函数。
-- `AI-Balance.js`：Scriptable 生命周期、Keychain/本地文件桥接、设置界面和 Renderer。
+- `AI-Balance.js`：唯一运行文件。按 Core → DesignSystem → ProviderAdapters → 生命周期初始化，内置模块各自使用函数作用域隔离。
+- `AI-Balance-Core.js`、`AI-Balance-Providers.js`：保留 v2.2.0 模块源码，作为历史参考，不再安装。
+- `LPL-Design-System.js`：共享模块源码和导出保持原样，其他 Scriptable 项目可继续引用。
+- `tests/fixtures/v2.2.0/AI-Balance.js.txt`：用于新旧生命周期和渲染树的差异回归，不作为运行文件。
+
+本地执行 `npm test` 或 `npm run verify` 运行全部测试。现有 Provider 回归直接加载单文件内置实现，另以保留的 v2.2.0 源码进行行为对比。
 
 Renderer 只消费标准化结果，不直接读取 `balance_infos`、`used_percent`、`primary_window`、`remaining` 或 `usage.today` 等 Provider 私有字段。

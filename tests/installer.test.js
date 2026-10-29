@@ -24,26 +24,16 @@ const resources = JSON.parse(
 );
 assert.deepEqual(
   resources.map((resource) => resource.scriptName),
-  [
-    "LPL-Design-System",
-    "AI-Balance-Core",
-    "AI-Balance-Providers",
-    "AI-Balance",
-    "AI Balance Installer",
-  ]
+  ["AI-Balance"]
 );
-assert.match(resources[0].sourceUrl, /LPL-Design-System\.js$/);
-assert.match(resources[1].sourceUrl, /AI-Balance-Core\.js$/);
-assert.match(resources[2].sourceUrl, /AI-Balance-Providers\.js$/);
-assert.match(resources[3].sourceUrl, /AI-Balance\.js$/);
-assert.match(resources[4].sourceUrl, /Installer\.js$/);
+assert.match(resources[0].sourceUrl, /AI-Balance\.js$/);
 const manifest = JSON.parse(
   fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")
 );
 assert.deepEqual(resources, manifest.resources);
 assert.equal(
   context.__installerTestApi.normalizeManifest(manifest).version,
-  "2.2.0"
+  "2.3.0"
 );
 assert.throws(
   () => context.__installerTestApi.normalizeManifest({
